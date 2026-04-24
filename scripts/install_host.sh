@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PROFILE="${1:-12gb}"
-LLM_ENV="$ROOT/configs/llm/${PROFILE}.env"
+LLM_ENV="$ROOT/configs/${PROFILE}.env"
 
 if [[ ! -f "$LLM_ENV" ]]; then
   echo "Unknown profile: $PROFILE"

@@ -1,97 +1,96 @@
 # RTLGEN
 
-RTLGEN is a local pipeline for generating and validating RTL modules from textual specifications.
+RTLGEN — это локальный пайплайн для генерации и валидации RTL-модулей по текстовым спецификациям.
 
-The project uses a local LLM to build a full development chain:
+Проект использует локальную LLM и строит полную цепочку разработки:
 
-**spec → Python reference model → test scenarios → golden trace → RTL → per-scenario testbenches → RTL simulation → waveforms**
-
----
-
-## What RTLGEN does
-
-RTLGEN automates the main steps of developing a digital module from a JSON specification:
-
-- selects a module specification from `specs/`
-- generates a **Python reference model**
-- generates **input scenarios**
-- computes a **golden trace** from the Python model
-- generates an **RTL module** in SystemVerilog
-- generates a **separate testbench for each scenario**
-- compiles and runs RTL against those testbenches with **Icarus Verilog**
-- saves a separate **waveform (`.vcd`)** for each scenario
-- opens waveforms in **GTKWave**
-
-This makes debugging much easier than using one giant testbench for all scenarios.
+**spec → Python reference model → test scenarios → golden trace → RTL → отдельные testbench-файлы по сценариям → RTL simulation → waveforms**
 
 ---
 
-## Main idea
+## Что делает RTLGEN
 
-Instead of generating RTL and checking it directly, RTLGEN first builds an executable reference model in Python.
+RTLGEN автоматизирует основные шаги разработки цифрового модуля на основе JSON-спецификации:
 
-The pipeline is:
+- выбирает спецификацию модуля из `specs/`
+- генерирует **эталонную Python-модель**
+- генерирует **входные сценарии**
+- вычисляет **golden trace** по Python-модели
+- генерирует **RTL-модуль** на SystemVerilog
+- генерирует **отдельный testbench для каждого сценария**
+- компилирует и запускает RTL через **Icarus Verilog**
+- сохраняет отдельный **waveform (`.vcd`)** для каждого сценария
+- открывает waveform-файлы в **GTKWave**
 
-1. Generate a Python reference model from the specification.
-2. Generate test scenarios for that model.
-3. Run the model on those scenarios.
-4. Save the resulting cycle-accurate outputs as a golden trace.
-5. Generate RTL from the specification and reference artifacts.
-6. Generate one SystemVerilog testbench per scenario.
-7. Simulate the RTL and compare it against the golden trace.
-8. Save one waveform per scenario.
-
-This gives you both a functional oracle and a readable validation flow.
+Такой подход делает отладку заметно проще, чем один большой testbench на все случаи сразу.
 
 ---
 
-## Features
+## Основная идея
 
-### Artifact generation
+RTLGEN сначала строит исполнимую эталонную модель на Python, а уже потом использует её как функциональный эталон для проверки RTL.
 
-For each module, RTLGEN generates:
+Общий пайплайн выглядит так:
+
+1. По спецификации генерируется Python reference model.
+2. Для этой модели генерируются тестовые сценарии.
+3. Python-модель прогоняется по этим сценариям.
+4. Результаты сохраняются как **golden trace**.
+5. По спецификации и эталонным артефактам генерируется RTL.
+6. Для каждого сценария создаётся отдельный SystemVerilog testbench.
+7. RTL симулируется и сравнивается с golden trace.
+8. Для каждого сценария сохраняется отдельный waveform.
+
+В результате получается и функциональный эталон, и удобный, читаемый процесс валидации.
+
+---
+
+## Возможности
+
+### Генерация артефактов
+
+Для каждого модуля RTLGEN создаёт:
 
 - `<module_name>_reference_model.py`
 - `<module_name>.sv`
-- `tb_<module_name>__<scenario>.sv` for each scenario
+- `tb_<module_name>__<scenario>.sv` для каждого сценария
 - `input_scenarios.json`
 - `golden_trace.json`
-- compile logs and simulation logs
-- waveform files (`.vcd`)
+- логи компиляции и симуляции
+- waveform-файлы (`.vcd`)
 
-### Reference-model validation
+### Проверка reference model
 
-Before touching RTL, RTLGEN validates the generated Python reference model against the generated scenarios.
+Перед генерацией RTL RTLGEN валидирует Python reference model на сгенерированных сценариях.
 
-### RTL validation
+### Проверка RTL
 
-RTLGEN validates the RTL using:
+RTLGEN валидирует RTL по схеме:
 
-- one scenario per testbench
-- one compile per scenario
-- one simulation per scenario
-- one waveform per scenario
+- один сценарий = один testbench
+- один сценарий = одна компиляция
+- один сценарий = одна симуляция
+- один сценарий = один waveform
 
-This makes it easy to see which scenario passes or fails.
+Это позволяет быстро понять, какой сценарий проходит, а какой — нет.
 
-### Testbench repair loop
+### Цикл восстановления testbench
 
-If a generated testbench fails to compile in `iverilog`, RTLGEN can:
+Если сгенерированный testbench не компилируется в `iverilog`, RTLGEN может:
 
-- read the compiler log
-- ask the LLM to regenerate the testbench with those errors in mind
-- retry the compile
+- прочитать лог компилятора
+- попросить LLM перегенерировать testbench с учётом ошибки
+- повторить попытку компиляции
 
 ---
 
-## Project structure
+## Структура проекта
 
 ```text
 RTLGen/
 ├── configs/
-│   └── llm/
-│       ├── 6gb.env
-│       └── 12gb.env
+│   ├── 6gb.env
+│   └── 12gb.env
 ├── docker/
 ├── generated/
 │   └── <module_name>/
@@ -123,11 +122,11 @@ RTLGen/
 
 ---
 
-## Dependencies
+## Зависимости
 
-### System dependencies on Linux
+### Системные зависимости на Linux
 
-Install:
+Нужно установить:
 
 - Docker
 - Docker Compose
@@ -135,14 +134,14 @@ Install:
 - GTKWave
 - Bash
 
-For Ubuntu or Debian:
+Для Ubuntu / Debian:
 
 ```bash
 sudo apt update
 sudo apt install -y git curl iverilog gtkwave
 ```
 
-Check that the tools are available:
+Проверка установки:
 
 ```bash
 iverilog -V
@@ -152,9 +151,9 @@ docker --version
 docker compose version
 ```
 
-### Dependencies inside the `app` container
+### Зависимости внутри контейнера `app`
 
-The application container uses Python 3.11 and installs:
+Контейнер приложения использует Python 3.11 и устанавливает:
 
 - `requests`
 - `PyYAML`
@@ -163,64 +162,64 @@ The application container uses Python 3.11 and installs:
 
 ### LLM backend
 
-The `llm` container runs a local inference server based on `llama.cpp`.
+Контейнер `llm` поднимает локальный inference server на базе `llama.cpp`.
 
-Choose the profile that matches your GPU memory:
+Нужно выбрать профиль, соответствующий объёму вашей GPU-памяти:
 
-- `configs/llm/6gb.env`
-- `configs/llm/12gb.env`
+- `configs/6gb.env`
+- `configs/12gb.env`
 
 ---
 
-## Installation on Linux
+## Установка на Linux
 
-### 1. Clone the repository
+### 1. Клонируйте репозиторий
 
 ```bash
 git clone <your-repo-url> RTLGen
 cd RTLGen
 ```
 
-### 2. Pick an LLM profile
+### 2. Выберите профиль LLM
 
-Use one of the prepared profiles:
+Используйте один из подготовленных профилей:
 
-- `6gb.env` for smaller GPUs
-- `12gb.env` for larger GPUs
+- `6gb.env` — для меньшего объёма VRAM
+- `12gb.env` — для большего объёма VRAM
 
-### 3. Run the installer
+### 3. Запустите установщик
 
-For a 12 GB GPU:
+Для GPU с 12 GB VRAM:
 
 ```bash
 bash scripts/install_host.sh 12gb
 ```
 
-For a 6 GB GPU:
+Для GPU с 6 GB VRAM:
 
 ```bash
 bash scripts/install_host.sh 6gb
 ```
 
-The installer will:
+Установщик:
 
-- create `.env` with your local `UID` and `GID`
-- save the selected profile
-- build the Docker containers
-- start the services
-- prepare the workspace
+- создаст `.env` с вашим `UID` и `GID`
+- сохранит выбранный профиль
+- соберёт Docker-контейнеры
+- поднимет сервисы
+- подготовит рабочее окружение
 
 ---
 
-## Running the program
+## Запуск
 
-### Start the menu
+### Открыть главное меню
 
 ```bash
 bash scripts/run_menu.sh
 ```
 
-### Open waveforms
+### Открыть waveforms
 
 ```bash
 bash scripts/open_wave.sh
@@ -228,24 +227,24 @@ bash scripts/open_wave.sh
 
 ---
 
-## Typical workflow
+## Типичный рабочий процесс
 
-1. Select a spec from `specs/`.
-2. Generate the Python reference model.
-3. Generate input scenarios and the golden trace.
-4. Validate the reference model.
-5. Generate the RTL module.
-6. Generate per-scenario testbenches.
-7. Compile and run the RTL simulation suite.
-8. Open the waveform of the scenario you want to inspect.
+1. Выбрать spec из `specs/`.
+2. Сгенерировать Python reference model.
+3. Сгенерировать входные сценарии и golden trace.
+4. Проверить reference model.
+5. Сгенерировать RTL-модуль.
+6. Сгенерировать отдельные testbench-файлы по сценариям.
+7. Скомпилировать и прогнать RTL simulation suite.
+8. Открыть waveform интересующего сценария.
 
 ---
 
-## Specification format
+## Формат спецификации
 
-All specs are JSON files stored in `specs/`.
+Все спецификации — это JSON-файлы в папке `specs/`.
 
-### Minimal example
+### Минимальный пример
 
 ```json
 {
@@ -259,43 +258,40 @@ All specs are JSON files stored in `specs/`.
 }
 ```
 
-### Fields
+### Что означают поля
 
 #### `module_name`
-Module name. Used for:
+Имя модуля. Используется:
 
-- generated file names
-- generated directory name
-- RTL module name
+- как имя RTL-модуля
+- как имя папки в `generated/`
 
 #### `description`
-Main behavioral description. This is the most important field for the LLM.
+Главное текстовое описание поведения модуля. Это основной источник информации для LLM.
 
 #### `inputs`
-List of input signal names.
+Список входных сигналов.
 
 #### `outputs`
-List of output signal names.
+Список выходных сигналов.
 
 #### `clock`
-Clock signal name.
+Имя тактового сигнала.
 
 #### `reset`
-Reset signal name.
+Имя сигнала сброса.
 
 #### `width`
-A module-specific parameter. Other modules may instead use fields such as:
+Дополнительный параметр модуля. Для других модулей вместо `width` могут использоваться, например:
 
 - `data_width`
 - `depth`
 - `latency`
 - `states`
 
-### Extended test-generation configuration
+### Расширенная генерация тестов
 
-Specs can include a `test_generation` block to control how scenarios are generated.
-
-Example:
+В spec можно добавить блок `test_generation`, чтобы управлять качеством тестов:
 
 ```json
 {
@@ -326,63 +322,68 @@ Example:
 
 ---
 
-## Golden trace
+## Что такое golden trace
 
-A **golden trace** is a cycle-accurate reference trace generated by the Python model.
+`golden trace` — это эталонная потактовая трасса поведения модуля.
 
-For each cycle it stores:
+Она строится так:
 
-- the cycle index
-- the input values
-- the expected output values
+- берутся входные сценарии
+- они прогоняются через Python reference model
+- на каждом такте сохраняются:
+  - входы
+  - выходы
+  - номер такта
 
-RTL is validated against this golden trace.
-
----
-
-## Testbench model
-
-RTLGEN generates **one testbench per scenario**.
-
-That means:
-
-- one scenario → one testbench
-- one scenario → one compile
-- one scenario → one simulation
-- one scenario → one waveform
-
-This makes logs and waveforms much easier to read and debug.
+Затем RTL сравнивается именно с этим эталоном.
 
 ---
 
-## Simulation backend
+## Архитектура testbench-файлов
 
-RTLGEN currently uses **Icarus Verilog** for RTL compilation and simulation.
+RTLGEN генерирует **отдельный testbench для каждого сценария**.
 
-Typical commands:
+Это означает:
+
+- один сценарий = один testbench
+- один сценарий = одна компиляция
+- один сценарий = одна симуляция
+- один сценарий = один waveform
+
+Плюсы такого подхода:
+
+- легко увидеть, какой сценарий упал
+- легко открыть нужный `.vcd`
+- проще отлаживать и RTL, и testbench
+
+---
+
+## Компиляция и симуляция
+
+Для RTL-проверки используется **Icarus Verilog**:
 
 ```bash
 iverilog -g2012 -o <out> <rtl> <testbench>
 vvp <out>
 ```
 
-Each scenario gets:
+Для каждого сценария RTLGEN сохраняет:
 
-- a dedicated compile log
-- a dedicated simulation log
-- a dedicated waveform file
+- `compile.log`
+- `sim.log`
+- waveform `.vcd`
 
 ---
 
-## Waveform viewing
+## Просмотр waveforms
 
-Waveforms are stored in:
+Waveform-файлы лежат в:
 
 ```text
-generated/<module_name>/waves/
+generated/<module>/waves/
 ```
 
-Example:
+Например:
 
 ```text
 generated/counter/waves/reset_to_zero.vcd
@@ -390,41 +391,47 @@ generated/counter/waves/increment_when_en.vcd
 generated/counter/waves/wraparound_check.vcd
 ```
 
-To open a waveform manually:
+### Открыть waveform вручную
 
 ```bash
 gtkwave generated/counter/waves/reset_to_zero.vcd
 ```
 
-Or use:
+### Или через helper script
 
 ```bash
 bash scripts/open_wave.sh
 ```
 
+Скрипт позволит:
+
+- выбрать модуль
+- выбрать нужный `.vcd`
+- открыть его в GTKWave
+
 ---
 
-## Commands
+## Основные команды
 
-### Install
+### Установка
 
 ```bash
 bash scripts/install_host.sh 12gb
 ```
 
-or
+или
 
 ```bash
 bash scripts/install_host.sh 6gb
 ```
 
-### Start the menu
+### Запуск меню
 
 ```bash
 bash scripts/run_menu.sh
 ```
 
-### Open a waveform
+### Открыть waveform
 
 ```bash
 bash scripts/open_wave.sh
@@ -432,106 +439,72 @@ bash scripts/open_wave.sh
 
 ---
 
-## Files that can likely be removed
+## Какие файлы можно убрать из проекта
 
-Below is a **safe cleanup list based on the current pipeline design**.
+Ниже перечислены только те файлы и каталоги, которые **обычно можно удалить**, если они реально не используются в вашей текущей версии проекта.
 
-### Likely removable if they still exist from older iterations
+### Можно удалить, если они больше не задействованы
 
-- `generated/logs/`
-- `generated/python_models/`
-- `generated/rtl/`
-- `generated/tb/`
-- `generated/traces/`
-- `generated/reports/`
+- `generated/` — целиком, если нужно очистить все сгенерированные артефакты
+- старые тестбенчи и RTL-файлы со старыми именами, если они остались после смены формата
+- временные debug-файлы в `generated/<module>/tests/`, если они больше не нужны
 
-These are legacy layout folders if you have already migrated to the new per-module structure under `generated/<module>/...`.
+### Проверить перед удалением
 
-### Remove if you are not using the old xrun flow
+#### `pyproject.toml`
+Если у вас там нет настроек `pytest`, форматирования, линтеров или зависимостей, файл можно удалить. Но сначала проверьте, не использует ли его `pytest`.
 
-- `scripts/run_xrun_check.py`
-- `src/simulators/xrun_runner.py`
+#### `src/simulators/xrun_runner.py`
+Если вы окончательно перешли на `iverilog` и `xrun` больше не поддерживается, этот файл можно удалить.
 
-### Remove if they are empty or obsolete in your current branch
+#### `scripts/run_xrun_check.py`
+Если Cadence backend больше не используется, файл можно удалить.
 
-- unused placeholder files in `generated/`
-- outdated debug files from failed generations
-- old single-testbench outputs that predate the per-scenario split
+#### `generated/rtl/`, `generated/tb/`, `generated/python_models/`
+Если это старые каталоги от предыдущей структуры проекта, их можно удалить после миграции на новую структуру `generated/<module>/...`.
 
-### Do **not** remove blindly
+### Не удалять
 
-- `pyproject.toml` — keep it **if pytest still reads configuration from it**. If `pytest` output shows `configfile: pyproject.toml`, then it is being used.
-- `requirements.docker.txt` — used for the `app` container
-- `docker-compose.yml` — required
-- `configs/llm/*.env` — required for profile selection
-- `scripts/install_host.sh`, `scripts/run_menu.sh`, `scripts/open_wave.sh` — part of the current workflow
+Не удаляйте без необходимости:
 
----
-
-## Recommended final structure
-
-```text
-RTLGen/
-├── configs/
-├── docker/
-├── generated/
-├── scripts/
-├── specs/
-├── src/
-├── docker-compose.yml
-├── requirements.docker.txt
-├── README.md
-├── .env.example
-└── .gitignore
-```
-
-If `pyproject.toml` is not used anymore, it can be removed too.
+- `docker-compose.yml`
+- `docker/`
+- `requirements.docker.txt`
+- `scripts/`
+- `src/`
+- `specs/`
+- `configs/`
 
 ---
 
 ## Troubleshooting
 
 ### `iverilog not found in PATH`
-
-Install Icarus Verilog:
+Установите Icarus Verilog:
 
 ```bash
 sudo apt install -y iverilog
 ```
 
 ### `gtkwave not found in PATH`
-
-Install GTKWave:
+Установите GTKWave:
 
 ```bash
 sudo apt install -y gtkwave
 ```
 
-### No waveform files appear
+### Не появляются waveforms
 
-Check that:
+Проверьте, что:
 
-- testbenches were generated
-- the RTL simulation suite was run
-- `.vcd` files exist under `generated/<module>/waves/`
+- testbench-файлы были сгенерированы
+- RTL suite действительно запускался
+- в `generated/<module>/waves/` появились `.vcd`
 
-### LLM service does not start
+### LLM не поднимается
 
-Check:
+Проверьте:
 
-- Docker is running
-- the selected LLM profile matches your machine
-- the `llm` container is healthy
-
----
-
-## Future improvements
-
-Possible next steps:
-
-- additional simulator backends
-- stricter spec schema
-- structured validation reports
-- improved waveform launch helpers
-- stronger repair loops for RTL and testbenches
-- coverage-oriented scenario generation
+- выбранный профиль `6gb` или `12gb`
+- доступность Docker
+- что контейнер `llm` действительно стартовал

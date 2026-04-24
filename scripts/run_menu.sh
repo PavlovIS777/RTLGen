@@ -10,7 +10,7 @@ if [[ ! -f "$ROOT/.rtlgen_profile" ]]; then
 fi
 
 PROFILE="$(cat "$ROOT/.rtlgen_profile")"
-LLM_ENV="$ROOT/configs/llm/${PROFILE}.env"
+LLM_ENV="$ROOT/configs/${PROFILE}.env"
 
 if [[ ! -f "$ROOT/.env" ]]; then
   printf "UID=%s\nGID=%s\n" "$(id -u)" "$(id -g)" > "$ROOT/.env"
