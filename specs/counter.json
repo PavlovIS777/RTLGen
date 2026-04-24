@@ -1,0 +1,31 @@
+{
+  "module_name": "counter",
+  "description": "4-bit synchronous up-counter. When rst_n=0, counter resets to 0. On each cycle, if en=1 and rst_n=1, increment count by 1 modulo 16. If en=0, hold the current value.",
+  "inputs": ["rst_n", "en"],
+  "outputs": ["count"],
+  "clock": "clk",
+  "reset": "rst_n",
+  "width": 4,
+  "test_generation": {
+    "directed_scenarios": 4,
+    "random_scenarios": 3,
+    "min_cycles_per_scenario": 4,
+    "max_cycles_per_scenario": 24,
+    "include_reset_scenarios": true,
+    "include_corner_cases": true,
+    "include_long_run": true,
+    "required_behaviors": [
+      "reset clears the counter to zero",
+      "counter increments only when en=1 and rst_n=1",
+      "counter holds value when en=0",
+      "counter wraps around from 15 to 0"
+    ],
+    "special_scenarios": [
+      "multiple resets in one scenario",
+      "enable toggles every cycle",
+      "long increment sequence that crosses wraparound",
+      "reset asserted immediately after wraparound"
+    ],
+    "notes": "Prefer more diverse scenarios instead of only one scenario per behavior."
+  }
+}

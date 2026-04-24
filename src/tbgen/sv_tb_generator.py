@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
+from src.paths import slugify_name
 from src.spec.schema import ModuleSpec
 
 
@@ -29,6 +31,7 @@ def _collect_signal_max_values(golden_trace: dict[str, Any]) -> dict[str, int]:
 def _infer_signal_widths(spec: ModuleSpec, golden_trace: dict[str, Any]) -> dict[str, int]:
     widths: dict[str, int] = {}
     signal_widths = spec.metadata.get("signal_widths", {})
+
     if isinstance(signal_widths, dict):
         for name, width in signal_widths.items():
             try:
@@ -78,12 +81,15 @@ def _port_list(spec: ModuleSpec) -> list[str]:
     ports: list[str] = []
     if spec.clock and spec.clock not in ports:
         ports.append(spec.clock)
+
     for name in spec.inputs:
         if name not in ports:
             ports.append(name)
+
     for name in spec.outputs:
         if name not in ports:
             ports.append(name)
+
     return ports
 
 
@@ -123,19 +129,28 @@ endtask
 """.strip()
 
 
-def generate_testbench(
+def _tb_module_name(spec: ModuleSpec, scenario_name: str) -> str:
+    slug = slugify_name(scenario_name)
+    return f"tb_{spec.module_name}__{slug}"
+
+
+def generate_testbench_for_scenario(
     spec: ModuleSpec,
     golden_trace: dict[str, Any],
+    scenario: dict[str, Any],
     out_path: str | Path,
     wave_path: str | Path,
 ) -> Path:
     out = Path(out_path)
     out.parent.mkdir(parents=True, exist_ok=True)
 
-    tb_module_name = f"tb_{spec.module_name}"
+    scenario_name = scenario.get("name", "unnamed_scenario")
+    scenario_description = scenario.get("description", "")
+    tb_module_name = _tb_module_name(spec, scenario_name)
     wave_path = str(Path(wave_path))
 
     widths = _infer_signal_widths(spec, golden_trace)
+    trace = scenario.get("trace", [])
 
     declarations: list[str] = []
     for name in _port_list(spec):
@@ -143,64 +158,68 @@ def generate_testbench(
 
     reset_task = _build_reset_task(spec, widths)
 
-    scenario_blocks: list[str] = []
-    scenarios = golden_trace.get("scenarios", [])
+    lines: list[str] = []
+    lines.append(f'    $display("SCENARIO: {scenario_name}");')
+    if scenario_description:
+        escaped_desc = scenario_description.replace('"', '\\"')
+        lines.append(f'    $display("DESCRIPTION: {escaped_desc}");')
 
-    for s_idx, scenario in enumerate(scenarios, start=1):
-        scenario_name = scenario.get("name", f"scenario_{s_idx}")
-        scenario_description = scenario.get("description", "")
-        trace = scenario.get("trace", [])
+    if spec.reset:
+        lines.append("    reset_dut();")
 
-        lines: list[str] = []
-        lines.append(f'    $display("SCENARIO {s_idx}/{len(scenarios)}: {scenario_name}");')
-        if scenario_description:
-            escaped_desc = scenario_description.replace('"', '\\"')
-            lines.append(f'    $display("  description: {escaped_desc}");')
+    lines.append("    scenario_failed = 0;")
 
-        if spec.reset:
-            lines.append("    reset_dut();")
+    for item in trace:
+        cycle = int(item["cycle"])
+        inputs = item.get("inputs", {})
+        outputs = item.get("outputs", {})
 
-        lines.append("    scenario_failed = 0;")
+        lines.append(f"    // cycle {cycle}")
 
-        for item in trace:
-            cycle = int(item["cycle"])
-            inputs = item.get("inputs", {})
-            outputs = item.get("outputs", {})
+        for name in spec.inputs:
+            value = int(inputs.get(name, 0))
+            lines.append(f"    {name} = {_sv_literal(value, widths.get(name, 1))};")
 
-            lines.append(f"    // cycle {cycle}")
+        if spec.clock:
+            lines.append(f"    @(posedge {spec.clock});")
+            lines.append("    #1;")
+        else:
+            lines.append("    #1;")
 
-            for name in spec.inputs:
-                value = int(inputs.get(name, 0))
-                lines.append(f"    {name} = {_sv_literal(value, widths.get(name, 1))};")
-
-            if spec.clock:
-                lines.append(f"    @(posedge {spec.clock});")
-                lines.append("    #1;")
-            else:
-                lines.append("    #1;")
-
-            for name in spec.outputs:
-                expected = int(outputs.get(name, 0))
-                expected_lit = _sv_literal(expected, widths.get(name, 1))
-                lines.append(
-                    f"""    total_checks = total_checks + 1;
+        for name in spec.outputs:
+            expected = int(outputs.get(name, 0))
+            expected_lit = _sv_literal(expected, widths.get(name, 1))
+            lines.append(
+                f"""    total_checks = total_checks + 1;
     if ({name} !== {expected_lit}) begin
       total_failures = total_failures + 1;
       scenario_failed = 1;
       $display("FAIL scenario={scenario_name} cycle={cycle} signal={name} expected=%0d got=%0d", {expected_lit}, {name});
     end"""
-                )
+            )
 
-        lines.append(
-            f"""    if (scenario_failed == 0) begin
+    lines.append(
+        f"""    if (scenario_failed == 0) begin
       $display("PASS scenario={scenario_name}");
     end else begin
       $display("FAIL scenario={scenario_name}");
     end
-    $display("");
+    $display("==============================================");
+    $display("RTL TESTBENCH SUMMARY");
+    $display("scenario       = {scenario_name}");
+    $display("total_checks   = %0d", total_checks);
+    $display("total_failures = %0d", total_failures);
+    $display("==============================================");
+
+    if (total_failures == 0) begin
+      $finish;
+    end else begin
+      $fatal(1, "RTL testbench detected failures.");
+    end
 """
-        )
-        scenario_blocks.append("\n".join(lines))
+    )
+
+    scenario_body = "\n".join(lines)
 
     tb_text = f"""`timescale 1ns/1ps
 
@@ -230,22 +249,11 @@ module {tb_module_name};
     $display("==============================================");
     $display("RTL TESTBENCH START");
     $display("Module: {spec.module_name}");
+    $display("Testbench: {tb_module_name}");
     $display("==============================================");
     $display("");
 
-{chr(10).join(scenario_blocks)}
-
-    $display("==============================================");
-    $display("RTL TESTBENCH SUMMARY");
-    $display("total_checks   = %0d", total_checks);
-    $display("total_failures = %0d", total_failures);
-    $display("==============================================");
-
-    if (total_failures == 0) begin
-      $finish;
-    end else begin
-      $fatal(1, "RTL testbench detected failures.");
-    end
+{scenario_body}
   end
 
 endmodule

@@ -21,13 +21,8 @@ def short_json(data: dict) -> str:
 
 
 def run_module_reference_tests(module_dir: Path) -> int:
-    model_path = module_dir / "reference_model.py"
     tests_dir = module_dir / "tests"
     golden_trace_path = tests_dir / "golden_trace.json"
-
-    if not model_path.exists():
-        ui.error(f"Missing file: {model_path}")
-        return 1
 
     if not golden_trace_path.exists():
         ui.error(f"Missing file: {golden_trace_path}")
@@ -37,6 +32,12 @@ def run_module_reference_tests(module_dir: Path) -> int:
     module_name = payload.get("module_name", module_dir.name)
     module_description = payload.get("module_description", "")
     scenarios = payload.get("scenarios", [])
+
+    model_path = module_dir / f"{module_name}_reference_model.py"
+
+    if not model_path.exists():
+        ui.error(f"Missing file: {model_path}")
+        return 1
 
     ui.title("REFERENCE MODEL VALIDATION")
     ui.kv("Module", module_name, "bold bright_cyan")
@@ -103,7 +104,7 @@ def run_module_reference_tests(module_dir: Path) -> int:
             ui.paragraph(item, indent=2)
             ui.separator()
 
-    ui.hr("═", "bright_cyan", bold=True)
+    ui.hr("═", "bright_cyan")
     return 0 if failed == 0 else 1
 
 

@@ -63,14 +63,14 @@ class TestbenchRepairService:
             {compile_log}
             Requirements:
             Return ONLY corrected SystemVerilog code in one code block.
-            The testbench module name must be tb_{spec.module_name}.
+            Keep one scenario per testbench.
             Keep waveform dumping enabled.
             Keep the behavioral checks against expected outputs.
             Target simulator is Icarus Verilog with -g2012.
             Use simple, compatible SystemVerilog only.
+
             Do not include explanations.
             """.strip()
-            
         raw = self.client.chat(prompt, temperature=0.0, max_tokens=2600)
 
         if debug_dir is not None:

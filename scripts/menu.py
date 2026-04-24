@@ -105,29 +105,37 @@ def print_artifact_result(payload: dict) -> None:
         ui.success("RTL module generated")
         ui.artifact("RTL file", payload["path"])
 
-    elif artifact == "testbench":
-        ui.success("SystemVerilog testbench generated")
-        ui.artifact("Testbench file", payload["path"])
-        if payload.get("waveform"):
-            ui.artifact("Waveform file", payload["waveform"])
+    elif artifact == "testbenches":
+        ui.success("SystemVerilog testbenches generated")
+        ui.summary_row("Count", payload["count"], "bright_cyan")
+        ui.artifact("Testbench dir", payload["tb_dir"])
+        ui.artifact("Waveforms dir", payload["waves_dir"])
 
-    elif artifact == "simulation":
-        if payload.get("compile_ok") and payload.get("simulation_ok"):
-            ui.success("RTL module passed simulation against the generated testbench")
+    elif artifact == "simulation_suite":
+        if payload.get("failed_count", 0) == 0:
+            ui.success("RTL module passed all generated testbenches")
         else:
-            ui.error("RTL simulation failed")
+            ui.error("RTL simulation suite detected failures")
 
-        ui.summary_row("Compile", "PASS" if payload.get("compile_ok") else "FAIL",
-                       "bright_green" if payload.get("compile_ok") else "bright_red")
-        ui.summary_row("Simulation", "PASS" if payload.get("simulation_ok") else "FAIL",
-                       "bright_green" if payload.get("simulation_ok") else "bright_red")
+        ui.summary_row("Scenarios", payload["scenario_count"], "bright_cyan")
+        ui.summary_row("Passed", payload["passed_count"], "bright_green")
+        ui.summary_row("Failed", payload["failed_count"], "bright_red" if payload["failed_count"] else "bright_green")
 
-        if payload.get("repaired_testbench"):
-            ui.warning(f"Testbench was regenerated {payload.get('repair_count', 0)} time(s) from compiler feedback")
+        ui.separator()
+        ui.info("Scenario results")
+        for idx, item in enumerate(payload.get("scenario_results", []), start=1):
+            ui.scenario_result(
+                idx,
+                payload["scenario_count"],
+                item["scenario_name"],
+                item["passed"],
+            )
+            if item.get("repaired_testbench"):
+                ui.warning(f"Testbench repaired {item.get('repair_count', 0)} time(s): {item['scenario_name']}")
 
-        ui.artifact("Compile log", payload["compile_log"])
-        ui.artifact("Simulation log", payload["sim_log"])
-        ui.artifact("Waveform", payload["waveform"])
+        ui.separator()
+        ui.artifact("Build dir", payload["build_dir"])
+        ui.artifact("Waveforms dir", payload["waves_dir"])
 
     ui.separator()
 
@@ -141,9 +149,12 @@ def generate_python_model(spec_path: str) -> int:
 def generate_tests(spec_path: str) -> int:
     paths = get_module_paths("generated", get_module_name_from_spec(spec_path))
     payload = run_json_command([
-        sys.executable, "scripts/generate_tests.py",
-        "--spec", spec_path,
-        "--model", str(paths.python_model_file),
+        sys.executable,
+        "scripts/generate_tests.py",
+        "--spec",
+        spec_path,
+        "--model",
+        str(paths.python_model_file),
         "--json",
     ])
     print_artifact_result(payload)
@@ -152,49 +163,55 @@ def generate_tests(spec_path: str) -> int:
 
 def run_reference_validation(spec_path: str) -> int:
     module_name = get_module_name_from_spec(spec_path)
-    result = subprocess.run([sys.executable, "scripts/run_reference_tests.py", "--module-dir", f"generated/{module_name}"], cwd=PROJECT_ROOT)
+    result = subprocess.run(
+        [sys.executable, "scripts/run_reference_tests.py", "--module-dir", f"generated/{module_name}"],
+        cwd=PROJECT_ROOT,
+    )
     return result.returncode
 
 
 def generate_rtl(spec_path: str) -> int:
     paths = get_module_paths("generated", get_module_name_from_spec(spec_path))
     payload = run_json_command([
-        sys.executable, "scripts/generate_rtl.py",
-        "--spec", spec_path,
-        "--model", str(paths.python_model_file),
-        "--trace", str(paths.golden_trace_file),
+        sys.executable,
+        "scripts/generate_rtl.py",
+        "--spec",
+        spec_path,
+        "--model",
+        str(paths.python_model_file),
+        "--trace",
+        str(paths.golden_trace_file),
         "--json",
     ])
     print_artifact_result(payload)
     return 0
 
 
-def generate_testbench(spec_path: str) -> int:
+def generate_testbenches(spec_path: str) -> int:
     paths = get_module_paths("generated", get_module_name_from_spec(spec_path))
     payload = run_json_command([
-        sys.executable, "scripts/generate_testbench.py",
-        "--spec", spec_path,
-        "--trace", str(paths.golden_trace_file),
+        sys.executable,
+        "scripts/generate_testbench.py",
+        "--spec",
+        spec_path,
+        "--trace",
+        str(paths.golden_trace_file),
         "--json",
     ])
     print_artifact_result(payload)
     return 0
 
 
-def run_iverilog(spec_path: str) -> int:
+def run_iverilog_suite(spec_path: str) -> int:
     payload = run_json_command([
-        sys.executable, "scripts/run_iverilog.py",
-        "--spec", spec_path,
+        sys.executable,
+        "scripts/run_iverilog.py",
+        "--spec",
+        spec_path,
         "--json",
     ])
     print_artifact_result(payload)
-    return 0 if payload.get("compile_ok") and payload.get("simulation_ok") else 1
-
-
-def open_waveform(spec_path: str) -> int:
-    subprocess.Popen([sys.executable, "scripts/open_waveform.py", "--spec", spec_path], cwd=PROJECT_ROOT)
-    ui.success("GTKWave launch requested")
-    return 0
+    return 0 if payload.get("failed_count", 1) == 0 else 1
 
 
 def full_flow(spec_path: str) -> int:
@@ -203,8 +220,8 @@ def full_flow(spec_path: str) -> int:
         ("Generate input scenarios and golden trace", lambda: generate_tests(spec_path)),
         ("Validate reference model", lambda: run_reference_validation(spec_path)),
         ("Generate RTL module", lambda: generate_rtl(spec_path)),
-        ("Generate SystemVerilog testbench", lambda: generate_testbench(spec_path)),
-        ("Compile and run RTL simulation", lambda: run_iverilog(spec_path)),
+        ("Generate SystemVerilog testbenches", lambda: generate_testbenches(spec_path)),
+        ("Compile and run RTL simulation suite", lambda: run_iverilog_suite(spec_path)),
     ]
 
     ui.title("RTLGEN · FULL FLOW")
@@ -247,10 +264,9 @@ def print_menu(spec_path: str | None) -> None:
     ui.bullet("3  Generate input scenarios and golden trace")
     ui.bullet("4  Validate reference model")
     ui.bullet("5  Generate RTL module")
-    ui.bullet("6  Generate SystemVerilog testbench")
-    ui.bullet("7  Compile and run RTL simulation")
-    ui.bullet("8  Open waveform in GTKWave")
-    ui.bullet("9  Run full flow")
+    ui.bullet("6  Generate SystemVerilog testbenches")
+    ui.bullet("7  Compile and run RTL simulation suite")
+    ui.bullet("8  Run full flow")
     ui.bullet("0  Exit")
     ui.separator()
 
@@ -290,19 +306,14 @@ def main() -> None:
             elif choice == "6":
                 spec_path = ensure_spec_selected(spec_path)
                 if spec_path:
-                    ui.section("Generate SystemVerilog testbench")
-                    generate_testbench(spec_path)
+                    ui.section("Generate SystemVerilog testbenches")
+                    generate_testbenches(spec_path)
             elif choice == "7":
                 spec_path = ensure_spec_selected(spec_path)
                 if spec_path:
-                    ui.section("Compile and run RTL simulation")
-                    run_iverilog(spec_path)
+                    ui.section("Compile and run RTL simulation suite")
+                    run_iverilog_suite(spec_path)
             elif choice == "8":
-                spec_path = ensure_spec_selected(spec_path)
-                if spec_path:
-                    ui.section("Open waveform in GTKWave")
-                    open_waveform(spec_path)
-            elif choice == "9":
                 spec_path = ensure_spec_selected(spec_path)
                 if spec_path:
                     full_flow(spec_path)
