@@ -1,0 +1,8 @@
+{
+  "module_name": "counter",
+  "description": "Minimal stub spec for the first pipeline run.",
+  "inputs": ["clk", "rst_n", "en"],
+  "outputs": ["count"],
+  "clock": "clk",
+  "reset": "rst_n"
+}
