@@ -16,11 +16,11 @@ from src.spec.parser import load_spec
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Generate RTL module from spec and reference artifacts")
-    parser.add_argument("--spec", required=True, help="Path to spec JSON")
-    parser.add_argument("--model", default=None, help="Path to generated Python reference model")
-    parser.add_argument("--trace", default=None, help="Path to generated golden trace JSON")
+    parser.add_argument("--spec", required=True)
+    parser.add_argument("--model", default=None)
+    parser.add_argument("--trace", default=None)
     parser.add_argument("--generated-dir", default="generated")
-    parser.add_argument("--json", action="store_true", help="Return machine-readable JSON")
+    parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
 
     spec = load_spec(args.spec)
@@ -47,13 +47,9 @@ def main() -> None:
         "module_name": spec.module_name,
         "artifact": "rtl",
         "path": str(paths.rtl_file),
-        "debug_raw": str(paths.tests_dir / "rtl_raw_response.txt"),
     }
 
-    if args.json:
-        print(json.dumps(payload, ensure_ascii=False))
-    else:
-        print(f"rtl: {paths.rtl_file}")
+    print(json.dumps(payload, ensure_ascii=False) if args.json else f"rtl: {paths.rtl_file}")
 
 
 if __name__ == "__main__":

@@ -17,12 +17,12 @@ from src.testgen.scenario_runner import build_pytest_file, run_scenarios, save_j
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Generate input scenarios and golden trace")
-    parser.add_argument("--spec", required=True, help="Path to spec JSON")
-    parser.add_argument("--model", default=None, help="Path to generated Python model")
+    parser.add_argument("--spec", required=True)
+    parser.add_argument("--model", default=None)
     parser.add_argument("--generated-dir", default="generated")
     parser.add_argument("--num-scenarios", type=int, default=None)
     parser.add_argument("--max-cycles", type=int, default=None)
-    parser.add_argument("--json", action="store_true", help="Return machine-readable JSON")
+    parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
 
     spec = load_spec(args.spec)
@@ -61,12 +61,7 @@ def main() -> None:
         "scenario_count": len(trace_payload.get("scenarios", [])),
     }
 
-    if args.json:
-        print(json.dumps(payload, ensure_ascii=False))
-    else:
-        print(f"input_scenarios: {scenarios_path}")
-        print(f"golden_trace: {trace_path}")
-        print(f"pytest: {pytest_path}")
+    print(json.dumps(payload, ensure_ascii=False) if args.json else f"golden_trace: {trace_path}")
 
 
 if __name__ == "__main__":

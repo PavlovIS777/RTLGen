@@ -6,12 +6,15 @@ from pathlib import Path
 
 @dataclass(slots=True)
 class ModulePaths:
+    module_name: str
     module_dir: Path
     tests_dir: Path
+    build_dir: Path
+    waves_dir: Path
 
     @property
     def python_model_file(self) -> Path:
-        return self.module_dir / "reference_model.py"
+        return self.module_dir / f"{self.module_name}_reference_model.py"
 
     @property
     def input_scenarios_file(self) -> Path:
@@ -27,26 +30,47 @@ class ModulePaths:
 
     @property
     def rtl_file(self) -> Path:
-        return self.module_dir / "module.sv"
+        return self.module_dir / f"{self.module_name}.sv"
 
     @property
     def tb_file(self) -> Path:
-        return self.module_dir / "testbench.sv"
+        return self.module_dir / f"tb_{self.module_name}.sv"
 
     @property
     def report_file(self) -> Path:
-        return self.module_dir / "pipeline_report.json"
+        return self.module_dir / f"{self.module_name}_pipeline_report.json"
+
+    @property
+    def compile_output_file(self) -> Path:
+        return self.build_dir / f"{self.module_name}.out"
+
+    @property
+    def compile_log_file(self) -> Path:
+        return self.build_dir / f"{self.module_name}_compile.log"
+
+    @property
+    def sim_log_file(self) -> Path:
+        return self.build_dir / f"{self.module_name}_sim.log"
+
+    @property
+    def wave_file(self) -> Path:
+        return self.waves_dir / f"{self.module_name}.vcd"
 
 
 def get_module_paths(base_generated_dir: str | Path, module_name: str) -> ModulePaths:
     base = Path(base_generated_dir)
     module_dir = base / module_name
     tests_dir = module_dir / "tests"
+    build_dir = module_dir / "build"
+    waves_dir = module_dir / "waves"
 
-    module_dir.mkdir(parents=True, exist_ok=True)
-    tests_dir.mkdir(parents=True, exist_ok=True)
+    for d in (module_dir, tests_dir, build_dir, waves_dir):
+        d.mkdir(parents=True, exist_ok=True)
 
     return ModulePaths(
+        module_name=module_name,
         module_dir=module_dir,
         tests_dir=tests_dir,
+        build_dir=build_dir,
+        waves_dir=waves_dir,
     )

@@ -16,10 +16,10 @@ from src.tbgen.sv_tb_generator import generate_testbench
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Generate SystemVerilog testbench from golden trace")
-    parser.add_argument("--spec", required=True, help="Path to spec JSON")
-    parser.add_argument("--trace", default=None, help="Path to generated golden trace JSON")
+    parser.add_argument("--spec", required=True)
+    parser.add_argument("--trace", default=None)
     parser.add_argument("--generated-dir", default="generated")
-    parser.add_argument("--json", action="store_true", help="Return machine-readable JSON")
+    parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
 
     spec = load_spec(args.spec)
@@ -32,6 +32,7 @@ def main() -> None:
         spec=spec,
         golden_trace=golden_trace,
         out_path=paths.tb_file,
+        wave_path=paths.wave_file,
     )
 
     payload = {
@@ -39,12 +40,10 @@ def main() -> None:
         "module_name": spec.module_name,
         "artifact": "testbench",
         "path": str(tb_path),
+        "waveform": str(paths.wave_file),
     }
 
-    if args.json:
-        print(json.dumps(payload, ensure_ascii=False))
-    else:
-        print(f"testbench: {tb_path}")
+    print(json.dumps(payload, ensure_ascii=False) if args.json else f"testbench: {tb_path}")
 
 
 if __name__ == "__main__":

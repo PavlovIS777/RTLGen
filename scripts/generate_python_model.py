@@ -17,9 +17,9 @@ from src.spec.parser import load_spec
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Generate Python reference model from spec")
-    parser.add_argument("--spec", required=True, help="Path to spec JSON")
+    parser.add_argument("--spec", required=True)
     parser.add_argument("--generated-dir", default="generated")
-    parser.add_argument("--json", action="store_true", help="Return machine-readable JSON")
+    parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
 
     spec = load_spec(args.spec)
@@ -39,10 +39,7 @@ def main() -> None:
         "path": str(model_path),
     }
 
-    if args.json:
-        print(json.dumps(payload, ensure_ascii=False))
-    else:
-        print(f"python_model: {model_path}")
+    print(json.dumps(payload, ensure_ascii=False) if args.json else f"python_model: {model_path}")
 
 
 if __name__ == "__main__":

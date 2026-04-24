@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
 
@@ -45,11 +44,7 @@ def _infer_signal_widths(spec: ModuleSpec, golden_trace: dict[str, Any]) -> dict
         if name in widths:
             continue
 
-        if name == spec.clock:
-            widths[name] = 1
-            continue
-
-        if name == spec.reset:
+        if name == spec.clock or name == spec.reset:
             widths[name] = 1
             continue
 
@@ -83,15 +78,12 @@ def _port_list(spec: ModuleSpec) -> list[str]:
     ports: list[str] = []
     if spec.clock and spec.clock not in ports:
         ports.append(spec.clock)
-
     for name in spec.inputs:
         if name not in ports:
             ports.append(name)
-
     for name in spec.outputs:
         if name not in ports:
             ports.append(name)
-
     return ports
 
 
@@ -135,9 +127,13 @@ def generate_testbench(
     spec: ModuleSpec,
     golden_trace: dict[str, Any],
     out_path: str | Path,
+    wave_path: str | Path,
 ) -> Path:
     out = Path(out_path)
     out.parent.mkdir(parents=True, exist_ok=True)
+
+    tb_module_name = f"tb_{spec.module_name}"
+    wave_path = str(Path(wave_path))
 
     widths = _infer_signal_widths(spec, golden_trace)
 
@@ -204,12 +200,11 @@ def generate_testbench(
     $display("");
 """
         )
-
         scenario_blocks.append("\n".join(lines))
 
     tb_text = f"""`timescale 1ns/1ps
 
-module {spec.module_name}_tb;
+module {tb_module_name};
 
 {chr(10).join("  " + d for d in declarations)}
 
@@ -223,6 +218,11 @@ module {spec.module_name}_tb;
 
 {"  initial begin " + spec.clock + " = 0; end" if spec.clock else ""}
 {"  always #5 " + spec.clock + " = ~" + spec.clock + ";" if spec.clock else ""}
+
+  initial begin
+    $dumpfile("{wave_path}");
+    $dumpvars(0, {tb_module_name});
+  end
 
 {"" if not reset_task else "  " + reset_task.replace(chr(10), chr(10) + "  ")}
 

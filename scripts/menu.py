@@ -11,6 +11,7 @@ SPECS_ROOT = PROJECT_ROOT / "specs"
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from src.paths import get_module_paths
 from src.ui.renderer import ConsoleUI
 
 
@@ -49,17 +50,10 @@ def choose_spec_interactive() -> str | None:
 
     for idx, path in enumerate(specs, start=1):
         rel = path.relative_to(PROJECT_ROOT)
-        try:
-            payload = load_spec_payload(path)
-            module_name = payload.get("module_name", "<unknown>")
-            description = payload.get("description", "")
-        except Exception:
-            module_name = "<invalid spec>"
-            description = ""
-
-        ui.bullet(f"[{idx}] {rel}", detail=f"module: {module_name}")
-        if description:
-            ui.paragraph(description, indent=6)
+        payload = load_spec_payload(path)
+        ui.bullet(f"[{idx}] {rel}", detail=f"module: {payload.get('module_name', '<unknown>')}")
+        if payload.get("description"):
+            ui.paragraph(payload["description"], indent=6)
         ui.separator()
 
     choice = input("Select spec number (empty to cancel): ").strip()
@@ -87,20 +81,10 @@ def ensure_spec_selected(current_spec: str | None) -> str | None:
 
 
 def run_json_command(cmd: list[str]) -> dict:
-    result = subprocess.run(
-        cmd,
-        cwd=PROJECT_ROOT,
-        text=True,
-        capture_output=True,
-    )
-
+    result = subprocess.run(cmd, cwd=PROJECT_ROOT, text=True, capture_output=True)
     if result.returncode != 0:
         raise RuntimeError(result.stderr.strip() or result.stdout.strip() or "Command failed")
-
-    stdout = result.stdout.strip()
-    if not stdout:
-        return {}
-    return json.loads(stdout)
+    return json.loads(result.stdout.strip()) if result.stdout.strip() else {}
 
 
 def print_artifact_result(payload: dict) -> None:
@@ -124,31 +108,42 @@ def print_artifact_result(payload: dict) -> None:
     elif artifact == "testbench":
         ui.success("SystemVerilog testbench generated")
         ui.artifact("Testbench file", payload["path"])
+        if payload.get("waveform"):
+            ui.artifact("Waveform file", payload["waveform"])
+
+    elif artifact == "simulation":
+        if payload.get("compile_ok") and payload.get("simulation_ok"):
+            ui.success("RTL module passed simulation against the generated testbench")
+        else:
+            ui.error("RTL simulation failed")
+
+        ui.summary_row("Compile", "PASS" if payload.get("compile_ok") else "FAIL",
+                       "bright_green" if payload.get("compile_ok") else "bright_red")
+        ui.summary_row("Simulation", "PASS" if payload.get("simulation_ok") else "FAIL",
+                       "bright_green" if payload.get("simulation_ok") else "bright_red")
+
+        if payload.get("repaired_testbench"):
+            ui.warning(f"Testbench was regenerated {payload.get('repair_count', 0)} time(s) from compiler feedback")
+
+        ui.artifact("Compile log", payload["compile_log"])
+        ui.artifact("Simulation log", payload["sim_log"])
+        ui.artifact("Waveform", payload["waveform"])
 
     ui.separator()
 
 
 def generate_python_model(spec_path: str) -> int:
-    payload = run_json_command([
-        sys.executable,
-        "scripts/generate_python_model.py",
-        "--spec",
-        spec_path,
-        "--json",
-    ])
+    payload = run_json_command([sys.executable, "scripts/generate_python_model.py", "--spec", spec_path, "--json"])
     print_artifact_result(payload)
     return 0
 
 
 def generate_tests(spec_path: str) -> int:
-    module_name = get_module_name_from_spec(spec_path)
+    paths = get_module_paths("generated", get_module_name_from_spec(spec_path))
     payload = run_json_command([
-        sys.executable,
-        "scripts/generate_tests.py",
-        "--spec",
-        spec_path,
-        "--model",
-        f"generated/{module_name}/reference_model.py",
+        sys.executable, "scripts/generate_tests.py",
+        "--spec", spec_path,
+        "--model", str(paths.python_model_file),
         "--json",
     ])
     print_artifact_result(payload)
@@ -157,29 +152,17 @@ def generate_tests(spec_path: str) -> int:
 
 def run_reference_validation(spec_path: str) -> int:
     module_name = get_module_name_from_spec(spec_path)
-    result = subprocess.run(
-        [
-            sys.executable,
-            "scripts/run_reference_tests.py",
-            "--module-dir",
-            f"generated/{module_name}",
-        ],
-        cwd=PROJECT_ROOT,
-    )
+    result = subprocess.run([sys.executable, "scripts/run_reference_tests.py", "--module-dir", f"generated/{module_name}"], cwd=PROJECT_ROOT)
     return result.returncode
 
 
 def generate_rtl(spec_path: str) -> int:
-    module_name = get_module_name_from_spec(spec_path)
+    paths = get_module_paths("generated", get_module_name_from_spec(spec_path))
     payload = run_json_command([
-        sys.executable,
-        "scripts/generate_rtl.py",
-        "--spec",
-        spec_path,
-        "--model",
-        f"generated/{module_name}/reference_model.py",
-        "--trace",
-        f"generated/{module_name}/tests/golden_trace.json",
+        sys.executable, "scripts/generate_rtl.py",
+        "--spec", spec_path,
+        "--model", str(paths.python_model_file),
+        "--trace", str(paths.golden_trace_file),
         "--json",
     ])
     print_artifact_result(payload)
@@ -187,17 +170,30 @@ def generate_rtl(spec_path: str) -> int:
 
 
 def generate_testbench(spec_path: str) -> int:
-    module_name = get_module_name_from_spec(spec_path)
+    paths = get_module_paths("generated", get_module_name_from_spec(spec_path))
     payload = run_json_command([
-        sys.executable,
-        "scripts/generate_testbench.py",
-        "--spec",
-        spec_path,
-        "--trace",
-        f"generated/{module_name}/tests/golden_trace.json",
+        sys.executable, "scripts/generate_testbench.py",
+        "--spec", spec_path,
+        "--trace", str(paths.golden_trace_file),
         "--json",
     ])
     print_artifact_result(payload)
+    return 0
+
+
+def run_iverilog(spec_path: str) -> int:
+    payload = run_json_command([
+        sys.executable, "scripts/run_iverilog.py",
+        "--spec", spec_path,
+        "--json",
+    ])
+    print_artifact_result(payload)
+    return 0 if payload.get("compile_ok") and payload.get("simulation_ok") else 1
+
+
+def open_waveform(spec_path: str) -> int:
+    subprocess.Popen([sys.executable, "scripts/open_waveform.py", "--spec", spec_path], cwd=PROJECT_ROOT)
+    ui.success("GTKWave launch requested")
     return 0
 
 
@@ -208,6 +204,7 @@ def full_flow(spec_path: str) -> int:
         ("Validate reference model", lambda: run_reference_validation(spec_path)),
         ("Generate RTL module", lambda: generate_rtl(spec_path)),
         ("Generate SystemVerilog testbench", lambda: generate_testbench(spec_path)),
+        ("Compile and run RTL simulation", lambda: run_iverilog(spec_path)),
     ]
 
     ui.title("RTLGEN · FULL FLOW")
@@ -226,8 +223,7 @@ def full_flow(spec_path: str) -> int:
             ui.error(f"Stopped on step {idx}: {name}")
             return code
 
-    print()
-    ui.success("FULL FLOW FINISHED SUCCESSFULLY")
+    ui.success("RTL MODULE IS READY AND PASSED TESTBENCH VALIDATION")
     return 0
 
 
@@ -239,7 +235,6 @@ def print_menu(spec_path: str | None) -> None:
     else:
         module_name = get_module_name_from_spec(spec_path)
         module_description = get_module_description_from_spec(spec_path)
-
         ui.kv("Selected spec", spec_path, "bold bright_magenta")
         ui.kv("Module", module_name, "bold bright_cyan")
         if module_description:
@@ -253,7 +248,9 @@ def print_menu(spec_path: str | None) -> None:
     ui.bullet("4  Validate reference model")
     ui.bullet("5  Generate RTL module")
     ui.bullet("6  Generate SystemVerilog testbench")
-    ui.bullet("7  Run full flow")
+    ui.bullet("7  Compile and run RTL simulation")
+    ui.bullet("8  Open waveform in GTKWave")
+    ui.bullet("9  Run full flow")
     ui.bullet("0  Exit")
     ui.separator()
 
@@ -270,49 +267,50 @@ def main() -> None:
                 selected = choose_spec_interactive()
                 if selected is not None:
                     spec_path = selected
-
             elif choice == "2":
                 spec_path = ensure_spec_selected(spec_path)
                 if spec_path:
                     ui.section("Generate Python reference model")
                     generate_python_model(spec_path)
-
             elif choice == "3":
                 spec_path = ensure_spec_selected(spec_path)
                 if spec_path:
                     ui.section("Generate input scenarios and golden trace")
                     generate_tests(spec_path)
-
             elif choice == "4":
                 spec_path = ensure_spec_selected(spec_path)
                 if spec_path:
                     ui.section("Validate reference model")
                     run_reference_validation(spec_path)
-
             elif choice == "5":
                 spec_path = ensure_spec_selected(spec_path)
                 if spec_path:
                     ui.section("Generate RTL module")
                     generate_rtl(spec_path)
-
             elif choice == "6":
                 spec_path = ensure_spec_selected(spec_path)
                 if spec_path:
                     ui.section("Generate SystemVerilog testbench")
                     generate_testbench(spec_path)
-
             elif choice == "7":
                 spec_path = ensure_spec_selected(spec_path)
                 if spec_path:
+                    ui.section("Compile and run RTL simulation")
+                    run_iverilog(spec_path)
+            elif choice == "8":
+                spec_path = ensure_spec_selected(spec_path)
+                if spec_path:
+                    ui.section("Open waveform in GTKWave")
+                    open_waveform(spec_path)
+            elif choice == "9":
+                spec_path = ensure_spec_selected(spec_path)
+                if spec_path:
                     full_flow(spec_path)
-
             elif choice == "0":
                 ui.note("Bye.")
                 break
-
             else:
                 ui.error("Unknown option.")
-
         except Exception as exc:
             ui.error("ERROR")
             ui.paragraph(str(exc), indent=2)

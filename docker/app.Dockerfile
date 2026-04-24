@@ -8,6 +8,7 @@ ENV PYTHONPATH=/app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     git \
+    iverilog \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.docker.txt /app/requirements.docker.txt
@@ -15,4 +16,4 @@ RUN pip install --no-cache-dir -r /app/requirements.docker.txt
 
 COPY . /app
 
-CMD ["python", "scripts/chat_smoke.py"]
+CMD ["sh", "-lc", "tail -f /dev/null"]
