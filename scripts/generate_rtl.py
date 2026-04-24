@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -19,6 +20,7 @@ def main() -> None:
     parser.add_argument("--model", default=None, help="Path to generated Python reference model")
     parser.add_argument("--trace", default=None, help="Path to generated golden trace JSON")
     parser.add_argument("--generated-dir", default="generated")
+    parser.add_argument("--json", action="store_true", help="Return machine-readable JSON")
     args = parser.parse_args()
 
     spec = load_spec(args.spec)
@@ -28,7 +30,6 @@ def main() -> None:
     trace_path = Path(args.trace) if args.trace else paths.golden_trace_file
 
     reference_model_code = model_path.read_text(encoding="utf-8")
-    import json
     golden_trace = json.loads(trace_path.read_text(encoding="utf-8"))
 
     service = RTLCodegenService()
@@ -41,9 +42,18 @@ def main() -> None:
 
     paths.rtl_file.write_text(rtl_code, encoding="utf-8")
 
-    print(f"module: {spec.module_name}")
-    print(f"rtl: {paths.rtl_file}")
-    print(f"debug_raw: {paths.tests_dir / 'rtl_raw_response.txt'}")
+    payload = {
+        "status": "ok",
+        "module_name": spec.module_name,
+        "artifact": "rtl",
+        "path": str(paths.rtl_file),
+        "debug_raw": str(paths.tests_dir / "rtl_raw_response.txt"),
+    }
+
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False))
+    else:
+        print(f"rtl: {paths.rtl_file}")
 
 
 if __name__ == "__main__":

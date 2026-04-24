@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import py_compile
 import sys
 from pathlib import Path
@@ -18,6 +19,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Generate Python reference model from spec")
     parser.add_argument("--spec", required=True, help="Path to spec JSON")
     parser.add_argument("--generated-dir", default="generated")
+    parser.add_argument("--json", action="store_true", help="Return machine-readable JSON")
     args = parser.parse_args()
 
     spec = load_spec(args.spec)
@@ -28,11 +30,19 @@ def main() -> None:
 
     model_path = paths.python_model_file
     model_path.write_text(code + "\n", encoding="utf-8")
-
     py_compile.compile(str(model_path), doraise=True)
 
-    print(f"module: {spec.module_name}")
-    print(f"python_model: {model_path}")
+    payload = {
+        "status": "ok",
+        "module_name": spec.module_name,
+        "artifact": "python_model",
+        "path": str(model_path),
+    }
+
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False))
+    else:
+        print(f"python_model: {model_path}")
 
 
 if __name__ == "__main__":

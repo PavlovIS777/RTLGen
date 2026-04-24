@@ -38,15 +38,20 @@ services:
       context: .
       dockerfile: docker/app.Dockerfile
     container_name: rtlgen-app
+    user: "${UID}:${GID}"
     depends_on:
       - llm
     environment:
       LLM_BASE_URL: http://llm:8080
       LLM_MODEL_ALIAS: ${MODEL_ALIAS:-local}
       LLM_SYSTEM_PROMPT: ${LLM_SYSTEM_PROMPT:-You are a careful coding assistant for Python, Verilog and SystemVerilog. Return only the requested artifact unless asked to explain.}
+      TERM: xterm-256color
+      FORCE_COLOR: "1"
     volumes:
       - .:/app
     command: ["sh", "-lc", "tail -f /dev/null"]
 
 volumes:
   llm_models:
+
+  

@@ -19,6 +19,7 @@ def main() -> None:
     parser.add_argument("--spec", required=True, help="Path to spec JSON")
     parser.add_argument("--trace", default=None, help="Path to generated golden trace JSON")
     parser.add_argument("--generated-dir", default="generated")
+    parser.add_argument("--json", action="store_true", help="Return machine-readable JSON")
     args = parser.parse_args()
 
     spec = load_spec(args.spec)
@@ -33,8 +34,17 @@ def main() -> None:
         out_path=paths.tb_file,
     )
 
-    print(f"module: {spec.module_name}")
-    print(f"testbench: {tb_path}")
+    payload = {
+        "status": "ok",
+        "module_name": spec.module_name,
+        "artifact": "testbench",
+        "path": str(tb_path),
+    }
+
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False))
+    else:
+        print(f"testbench: {tb_path}")
 
 
 if __name__ == "__main__":

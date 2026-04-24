@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -21,6 +22,7 @@ def main() -> None:
     parser.add_argument("--generated-dir", default="generated")
     parser.add_argument("--num-scenarios", type=int, default=None)
     parser.add_argument("--max-cycles", type=int, default=None)
+    parser.add_argument("--json", action="store_true", help="Return machine-readable JSON")
     args = parser.parse_args()
 
     spec = load_spec(args.spec)
@@ -49,11 +51,22 @@ def main() -> None:
         out_path=paths.pytest_file,
     )
 
-    print(f"module: {spec.module_name}")
-    print(f"input_scenarios: {scenarios_path}")
-    print(f"golden_trace: {trace_path}")
-    print(f"pytest: {pytest_path}")
-    print(f"debug_raw: {paths.tests_dir}")
+    payload = {
+        "status": "ok",
+        "module_name": spec.module_name,
+        "artifact": "tests",
+        "input_scenarios": str(scenarios_path),
+        "golden_trace": str(trace_path),
+        "pytest": str(pytest_path),
+        "scenario_count": len(trace_payload.get("scenarios", [])),
+    }
+
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False))
+    else:
+        print(f"input_scenarios: {scenarios_path}")
+        print(f"golden_trace: {trace_path}")
+        print(f"pytest: {pytest_path}")
 
 
 if __name__ == "__main__":
