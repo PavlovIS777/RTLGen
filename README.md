@@ -1,40 +1,39 @@
 # RTLGEN
 
-RTLGEN — инструмент для локальной генерации и проверки RTL-модулей по текстовой спецификации.
+RTLGEN — инструмент для генерации и верификации RTL-модулей с помощью LLM.  
+Проект использует многошаговый пайплайн, в котором модель не просто пишет Verilog, а последовательно строит эталонную модель, сценарии проверки, golden trace, RTL и testbench'и, а затем прогоняет симуляцию и сохраняет waveforms.
 
-Основной поток выглядит так:
+**Пайплайн:**  
+**spec → Python reference model → test scenarios → golden trace → RTL → per-scenario testbenches → simulation → waveforms**
 
-**spec → reference model → сценарии → golden trace → RTL → testbench’и → simulation → waveforms**
+## Основа пайплайна
 
-Где:
-- **reference model** — эталонная Python-модель поведения;
-- **golden trace** — эталонные потактовые выходы этой модели;
-- **testbench’и** — отдельные SystemVerilog testbench-файлы, по одному на сценарий;
-- **waveforms** — `.vcd`-файлы для просмотра сигналов.
+Архитектура RTLGEN основана на идеях статьи **AutoVeriFix: Automatically Correcting Errors and Enhancing Functional Correctness in LLM-Generated Verilog Code**  
+**Yan Tan, Xiangchen Meng, Zijun Jiang, Yangdi Lyu**  
+arXiv:2509.08416, 2025  
+DOI: `10.48550/arXiv.2509.08416`
 
----
+В духе AutoVeriFix пайплайн строится вокруг двух ключевых шагов:
+- сначала LLM генерирует **Python reference model**;
+- затем эта модель используется для генерации **тестов и golden trace**, по которым проверяется RTL.
 
-## Что умеет RTLGEN
+## Что делает RTLGEN
 
 RTLGEN позволяет:
 
-- выбрать спецификацию из папки `specs/`;
-- сгенерировать эталонную Python-модель;
-- сгенерировать набор сценариев проверки;
-- рассчитать golden trace;
-- сгенерировать RTL на SystemVerilog;
-- сгенерировать отдельный testbench для каждого сценария;
-- прогнать RTL через `iverilog`;
-- сохранить `.vcd` waveforms по каждому сценарию;
-- открыть нужную waveform в GTKWave.
-
----
+- выбрать спецификацию модуля из `specs/`;
+- сгенерировать **Python reference model**;
+- сгенерировать **сценарии тестирования**;
+- построить **golden trace**;
+- сгенерировать **RTL на SystemVerilog**;
+- сгенерировать **отдельный testbench на каждый сценарий**;
+- прогнать RTL через **Icarus Verilog**;
+- сохранить **`.vcd` waveforms**;
+- открыть нужную waveform в **GTKWave**.
 
 ## Зависимости
 
-### На Linux / WSL
-
-Нужны:
+Для запуска на Linux / WSL нужны:
 
 - Docker
 - Docker Compose
@@ -42,22 +41,9 @@ RTLGEN позволяет:
 - GTKWave
 - Bash
 
-### Внутри контейнера
-
-Контейнер `app` использует Python 3.11 и основные пакеты:
-
-- `requests`
-- `PyYAML`
-- `pytest`
-- `rich`
-
-Контейнер `llm` поднимает локальный inference server на основе `llama.cpp`.
-
----
-
 ## Установка
 
-### 1. Установите системные зависимости
+### 1. Установить системные зависимости
 
 Для Ubuntu / Debian:
 
@@ -66,7 +52,7 @@ sudo apt update
 sudo apt install -y git curl iverilog gtkwave
 ```
 
-Проверьте:
+Проверка:
 
 ```bash
 iverilog -V
@@ -76,37 +62,38 @@ docker --version
 docker compose version
 ```
 
-### 2. Клонируйте проект
+### 2. Клонировать репозиторий
 
 ```bash
 git clone <your-repo-url> RTLGen
 cd RTLGen
 ```
 
-### 3. Выберите профиль модели
+### 3. Выбрать конфигурацию модели
 
-В проекте есть готовые пресеты:
+Папка `configs/` содержит готовые `.env`-профили, названные по моделям.  
+Например:
 
-- `configs/6gb.env`
-- `configs/12gb.env`
+- `configs/Qwen2.5-7B.env`
+- `configs/Qwen2.5-14B.env`
+- `configs/DeepSeekV2_Lite.env`
+- `configs/StarCoder-16B.env`
 
-Можно добавить и свои собственные `.env`-профили в папку `configs/`, если нужен другой размер модели, другой контекст или другая конфигурация inference.
+Можно добавлять и свои собственные `.env`-файлы в `configs/`.
 
-### 4. Установите и соберите проект
+### 4. Установить проект
 
-Для 12 GB VRAM:
-
-```bash
-bash scripts/install_host.sh 12gb
-```
-
-Для 6 GB VRAM:
+Пример для профиля `Qwen2.5-14B`:
 
 ```bash
-bash scripts/install_host.sh 6gb
+bash scripts/install_host.sh Qwen2.5-14B
 ```
 
----
+Пример для профиля `Qwen2.5-7B`:
+
+```bash
+bash scripts/install_host.sh Qwen2.5-7B
+```
 
 ## Быстрый старт
 
@@ -121,8 +108,6 @@ bash scripts/run_menu.sh
 ```bash
 bash scripts/open_wave.sh
 ```
-
----
 
 ## Структура спецификации
 
@@ -140,41 +125,21 @@ bash scripts/open_wave.sh
 }
 ```
 
-### Поля спецификации
+### Основные поля
 
 | Поле | Назначение |
 |---|---|
-| `module_name` | имя модуля и имя папки в `generated/` |
+| `module_name` | имя RTL-модуля и имя каталога в `generated/` |
 | `description` | описание поведения модуля |
-| `inputs` | список входных сигналов |
-| `outputs` | список выходных сигналов |
+| `inputs` | входные сигналы |
+| `outputs` | выходные сигналы |
 | `clock` | имя тактового сигнала |
 | `reset` | имя сигнала сброса |
 | `width` / другие параметры | дополнительные параметры модуля |
 
-### Настройка генерации тестов
-
-Можно добавить блок `test_generation`:
-
-```json
-{
-  "test_generation": {
-    "directed_scenarios": 8,
-    "random_scenarios": 12,
-    "min_cycles_per_scenario": 4,
-    "max_cycles_per_scenario": 24,
-    "include_reset_scenarios": true,
-    "include_corner_cases": true,
-    "include_long_run": true
-  }
-}
-```
-
----
-
 ## Что создаёт RTLGEN
 
-Для модуля `counter` структура будет примерно такой:
+Для модуля `counter` структура результатов выглядит так:
 
 ```text
 generated/
@@ -198,30 +163,23 @@ generated/
       increment_when_en.vcd
 ```
 
----
-
 ## Как проходит проверка
 
-1. По spec строится reference model.
+1. По spec генерируется Python reference model.
 2. По модели строятся сценарии.
-3. По сценариям считается golden trace.
-4. На основе golden trace генерируются testbench’и.
-5. Каждый сценарий компилируется и запускается отдельно.
+3. По сценариям рассчитывается golden trace.
+4. По golden trace генерируются testbench'и.
+5. Каждый сценарий компилируется и симулируется отдельно.
 6. Для каждого сценария создаётся свой `.vcd`.
 
-Это позволяет быстро понять:
-- какой сценарий прошёл;
-- какой сценарий упал;
-- какую waveform нужно открыть.
-
----
+Такой подход делает ошибки локализуемыми: видно, какой сценарий упал, какой testbench был использован и какую waveform нужно открыть.
 
 ## Основные команды
 
-Установка:
+Установка с выбранной моделью:
 
 ```bash
-bash scripts/install_host.sh 12gb
+bash scripts/install_host.sh Qwen2.5-14B
 ```
 
 Запуск меню:
@@ -230,13 +188,11 @@ bash scripts/install_host.sh 12gb
 bash scripts/run_menu.sh
 ```
 
-Открыть waveforms:
+Открыть waveform:
 
 ```bash
 bash scripts/open_wave.sh
 ```
-
----
 
 ## Troubleshooting
 
@@ -255,13 +211,13 @@ sudo apt install -y gtkwave
 ### Не появляются `.vcd`
 
 Проверьте, что:
-- testbench’и сгенерированы;
+- testbench'и были сгенерированы;
 - simulation suite был запущен;
-- в `generated/<module>/waves/` появились файлы.
+- в `generated/<module>/waves/` появились `.vcd`.
 
 ### LLM не поднимается
 
 Проверьте:
-- выбранный профиль в `configs/`;
-- доступность Docker;
-- что контейнер `llm` успешно стартовал.
+- какой профиль выбран в `configs/`;
+- что Docker доступен;
+- что контейнер `llm` стартовал без ошибок.
