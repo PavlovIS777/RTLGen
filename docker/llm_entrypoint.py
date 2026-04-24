@@ -5,10 +5,11 @@ import json
 import os
 import sys
 import time
-from pathlib import Path
-
+import re
 import requests
+
 from huggingface_hub import HfApi
+from pathlib import Path
 
 
 def log(payload: dict) -> None:
@@ -156,33 +157,46 @@ def download_with_resume(
 
     raise RuntimeError("Download failed after retries")
 
+def repo_cache_dir(cache_root: Path, repo_id: str) -> Path:
+    safe = re.sub(r"[^a-zA-Z0-9_.-]+", "_", repo_id)
+    return cache_root / safe
+
+
+def find_cached_model(repo_dir: Path, remote_file: str) -> Path | None:
+    candidate = repo_dir / remote_file
+    if candidate.exists():
+        return candidate
+    return None
 
 def ensure_model(repo_id: str, quant: str, cache_root: Path, hf_token: str | None) -> Path:
     cache_root.mkdir(parents=True, exist_ok=True)
 
-    cached = find_cached_model(cache_root, quant)
-    if cached is not None and cached.exists():
+    remote_file = find_remote_model_file(repo_id, quant)
+    repo_dir = repo_cache_dir(cache_root, repo_id)
+    repo_dir.mkdir(parents=True, exist_ok=True)
+
+    cached = find_cached_model(repo_dir, remote_file)
+    if cached is not None:
         log({
             "stage": "model_cached",
+            "repo_id": repo_id,
             "model_path": str(cached),
             "size_bytes": cached.stat().st_size,
         })
         return cached
 
-    remote_file = find_remote_model_file(repo_id, quant)
     url = hf_resolve_url(repo_id, remote_file)
-    final_path = cache_root / remote_file
+    final_path = repo_dir / remote_file
 
     log({
         "stage": "model_download_start",
         "repo_id": repo_id,
         "remote_file": remote_file,
         "url": url,
-        "cache_root": str(cache_root),
+        "target_path": str(final_path),
     })
 
     return download_with_resume(url, final_path, hf_token)
-
 
 def main() -> None:
     model_repo_raw = os.getenv("MODEL_REPO", "").strip()
