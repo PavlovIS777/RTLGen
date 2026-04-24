@@ -219,8 +219,8 @@ def full_flow(spec_path: str) -> int:
         ("Generate Python reference model", lambda: generate_python_model(spec_path)),
         ("Generate input scenarios and golden trace", lambda: generate_tests(spec_path)),
         ("Validate reference model", lambda: run_reference_validation(spec_path)),
-        ("Generate RTL module", lambda: generate_rtl(spec_path)),
         ("Generate SystemVerilog testbenches", lambda: generate_testbenches(spec_path)),
+        ("Generate RTL module", lambda: generate_rtl(spec_path)),
         ("Compile and run RTL simulation suite", lambda: run_iverilog_suite(spec_path)),
     ]
 

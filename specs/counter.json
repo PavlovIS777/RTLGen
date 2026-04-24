@@ -5,6 +5,12 @@
   "outputs": ["count"],
   "clock": "clk",
   "reset": "rst_n",
+  "signal_widths": {
+    "clk": 1,
+    "rst_n": 1,
+    "en": 1,
+    "count": 4
+  },
   "width": 4,
   "test_generation": {
     "directed_scenarios": 4,
