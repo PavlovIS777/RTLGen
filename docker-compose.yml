@@ -18,7 +18,7 @@ services:
       THREADS: ${THREADS:-4}
       PARALLEL: ${PARALLEL:-1}
     volumes:
-      - llm_models:/models
+      - ./models:/models
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://localhost:8080/health || exit 1"]
       interval: 20s
@@ -50,8 +50,4 @@ services:
     volumes:
       - .:/app
     command: ["sh", "-lc", "tail -f /dev/null"]
-
-volumes:
-  llm_models:
-
   

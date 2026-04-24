@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PROFILE="${1:-12gb}"
+PROFILE="${1:-Qwen2.5-14B}"
 LLM_ENV="$ROOT/configs/${PROFILE}.env"
 
 if [[ ! -f "$LLM_ENV" ]]; then
@@ -26,6 +26,7 @@ printf "UID=%s\nGID=%s\n" "$(id -u)" "$(id -g)" > "$ROOT/.env"
 echo "$PROFILE" > "$ROOT/.rtlgen_profile"
 
 mkdir -p "$ROOT/generated"
+mkdir -p "$ROOT/models/cache"
 
 if ! command -v gtkwave >/dev/null 2>&1; then
   if command -v sudo >/dev/null 2>&1; then
