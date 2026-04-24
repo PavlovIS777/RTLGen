@@ -69,16 +69,114 @@ if [[ -z "$MODEL_ALIAS" ]]; then
   exit 1
 fi
 
+human_bytes() {
+  python3 - "$1" <<'PY'
+import sys
+n = float(sys.argv[1])
+units = ["B", "KB", "MB", "GB", "TB"]
+i = 0
+while n >= 1024 and i < len(units) - 1:
+    n /= 1024.0
+    i += 1
+print(f"{n:.1f}{units[i]}")
+PY
+}
+
+draw_bar() {
+  python3 - "$1" <<'PY'
+import sys
+try:
+    percent = float(sys.argv[1])
+except Exception:
+    percent = 0.0
+percent = max(0.0, min(100.0, percent))
+width = 30
+filled = int(round(width * percent / 100.0))
+bar = "█" * filled + "░" * (width - filled)
+print(bar)
+PY
+}
+
+progress_from_logs() {
+  local logs
+  logs="$(compose_cmd logs --no-color --tail=200 llm 2>/dev/null || true)"
+
+  python3 - <<PY
+import json
+import re
+import sys
+
+text = """$logs"""
+lines = text.splitlines()
+
+for line in reversed(lines):
+    m = re.search(r'(\{.*\})', line)
+    if not m:
+        continue
+    try:
+        obj = json.loads(m.group(1))
+    except Exception:
+        continue
+
+    stage = obj.get("stage")
+    if stage == "model_download_progress":
+        print(json.dumps({
+            "downloaded": obj.get("downloaded_bytes"),
+            "total": obj.get("total_bytes"),
+            "percent": obj.get("percent"),
+        }))
+        sys.exit(0)
+
+    if stage == "model_download_complete":
+        size = obj.get("size_bytes")
+        print(json.dumps({
+            "downloaded": size,
+            "total": size,
+            "percent": 100.0,
+        }))
+        sys.exit(0)
+
+print("{}")
+PY
+}
+
 print_progress() {
-  local cache_human="0B"
-  local last_log=""
+  local cache_human progress_json percent downloaded total d_h t_h bar
 
   cache_human="$(compose_cmd exec -T llm sh -lc 'du -sh /models/cache 2>/dev/null | cut -f1' 2>/dev/null || echo 0B)"
-  last_log="$(compose_cmd logs --no-color --tail=1 llm 2>/dev/null | tail -n 1 || true)"
+  progress_json="$(progress_from_logs || echo '{}')"
 
-  printf "\rDownloading model... cache=%-8s" "$cache_human"
-  if [[ -n "$last_log" ]]; then
-    printf " | %s" "$last_log"
+  percent="$(python3 - <<PY
+import json
+obj = json.loads('''$progress_json''')
+v = obj.get("percent")
+print("" if v is None else v)
+PY
+)"
+  downloaded="$(python3 - <<PY
+import json
+obj = json.loads('''$progress_json''')
+v = obj.get("downloaded")
+print("" if v is None else v)
+PY
+)"
+  total="$(python3 - <<PY
+import json
+obj = json.loads('''$progress_json''')
+v = obj.get("total")
+print("" if v is None else v)
+PY
+)"
+
+  if [[ -n "$downloaded" && -n "$total" ]]; then
+    d_h="$(human_bytes "$downloaded")"
+    t_h="$(human_bytes "$total")"
+    bar="$(draw_bar "$percent")"
+    printf "\r[%s] %6.2f%%  %8s / %-8s  cache=%-8s" \
+      "$bar" "$percent" "$d_h" "$t_h" "$cache_human"
+  else
+    printf "\r[░░░░░░░░░░░░░░░░░░░░░░░░░░░░]   0.00%%  waiting for progress...  cache=%-8s" \
+      "$cache_human"
   fi
 }
 
@@ -89,7 +187,7 @@ echo
 
 READY=0
 for _ in $(seq 1 360); do
-  print_progress
+  print_progress || true
 
   if curl -fsS http://localhost:8080/v1/models >/tmp/rtlgen_models.json 2>/dev/null; then
     if grep -q "\"$MODEL_ALIAS\"" /tmp/rtlgen_models.json; then
@@ -98,7 +196,7 @@ for _ in $(seq 1 360); do
     fi
   fi
 
-  sleep 5
+  sleep 3
 done
 
 echo
