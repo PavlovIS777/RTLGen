@@ -35,17 +35,18 @@ if ! command -v gtkwave >/dev/null 2>&1; then
   fi
 fi
 
+compose_cmd() {
+  docker compose \
+    --env-file "$ROOT/.env" \
+    --env-file "$LLM_ENV" \
+    "$@"
+}
+
 echo "Building containers..."
-docker compose \
-  --env-file "$ROOT/.env" \
-  --env-file "$LLM_ENV" \
-  build app llm
+compose_cmd build app llm
 
 echo "Starting services..."
-docker compose \
-  --env-file "$ROOT/.env" \
-  --env-file "$LLM_ENV" \
-  up -d --force-recreate llm app
+compose_cmd up -d --force-recreate llm app
 
 MODEL_ALIAS="$(
 python3 - <<PY
@@ -68,20 +69,39 @@ if [[ -z "$MODEL_ALIAS" ]]; then
   exit 1
 fi
 
+print_progress() {
+  local cache_human="0B"
+  local last_log=""
+
+  cache_human="$(compose_cmd exec -T llm sh -lc 'du -sh /models/cache 2>/dev/null | cut -f1' 2>/dev/null || echo 0B)"
+  last_log="$(compose_cmd logs --no-color --tail=1 llm 2>/dev/null | tail -n 1 || true)"
+
+  printf "\rDownloading model... cache=%-8s" "$cache_human"
+  if [[ -n "$last_log" ]]; then
+    printf " | %s" "$last_log"
+  fi
+}
+
 echo
 echo "Waiting for LLM server and model: $MODEL_ALIAS"
 echo "This can take a while if the model is not cached yet."
+echo
 
 READY=0
 for _ in $(seq 1 360); do
+  print_progress
+
   if curl -fsS http://localhost:8080/v1/models >/tmp/rtlgen_models.json 2>/dev/null; then
     if grep -q "\"$MODEL_ALIAS\"" /tmp/rtlgen_models.json; then
       READY=1
       break
     fi
   fi
+
   sleep 5
 done
+
+echo
 
 if [[ "$READY" -ne 1 ]]; then
   echo

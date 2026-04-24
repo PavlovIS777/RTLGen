@@ -1,255 +1,326 @@
-#!/usr/bin/env python3
 from __future__ import annotations
 
 import json
 import os
+import re
+import shutil
 import sys
 import time
-import re
-import requests
-
-from huggingface_hub import HfApi
 from pathlib import Path
+
+import requests
+from huggingface_hub import HfApi, hf_hub_url
 
 
 def log(payload: dict) -> None:
     print(json.dumps(payload, ensure_ascii=False), flush=True)
 
 
-def parse_repo_and_quant(raw: str) -> tuple[str, str]:
-    if not raw:
-        raise RuntimeError("MODEL_REPO is empty")
-    if ":" in raw:
-        repo, quant = raw.rsplit(":", 1)
-        return repo, quant.upper()
-    return raw, "Q4_K_M"
+def getenv(name: str, default: str = "") -> str:
+    return os.getenv(name, default).strip()
 
 
-def find_cached_model(cache_root: Path, quant: str) -> Path | None:
-    if not cache_root.exists():
-        return None
+def parse_model_repo(value: str) -> tuple[str, str]:
+    value = value.strip()
+    if not value:
+        raise ValueError("MODEL_REPO is empty")
 
-    ggufs = sorted(cache_root.rglob("*.gguf"))
-    if not ggufs:
-        return None
+    repo_id, sep, quant = value.rpartition(":")
+    if sep and "/" in repo_id:
+        return repo_id, quant
 
-    preferred = [p for p in ggufs if quant.lower() in p.name.lower()]
-    if preferred:
-        return preferred[0]
+    return value, getenv("MODEL_QUANT", "")
 
-    return ggufs[0]
-
-
-def find_remote_model_file(repo_id: str, quant: str) -> str:
-    api = HfApi()
-    files = api.list_repo_files(repo_id=repo_id, repo_type="model")
-
-    ggufs = sorted(f for f in files if f.lower().endswith(".gguf"))
-    if not ggufs:
-        raise RuntimeError(f"No GGUF files found in repo: {repo_id}")
-
-    preferred = [f for f in ggufs if quant.lower() in Path(f).name.lower()]
-    if preferred:
-        return preferred[0]
-
-    return ggufs[0]
-
-
-def hf_resolve_url(repo_id: str, filename: str) -> str:
-    return f"https://huggingface.co/{repo_id}/resolve/main/{filename}?download=true"
-
-
-def get_remote_size(url: str, headers: dict[str, str]) -> int | None:
-    try:
-        r = requests.head(url, headers=headers, allow_redirects=True, timeout=30)
-        r.raise_for_status()
-        value = r.headers.get("Content-Length")
-        return int(value) if value else None
-    except Exception:
-        return None
-
-
-def download_with_resume(
-    url: str,
-    dest: Path,
-    token: str | None,
-    max_retries: int = 10,
-    chunk_size: int = 8 * 1024 * 1024,
-) -> Path:
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    part = dest.with_suffix(dest.suffix + ".part")
-
-    headers: dict[str, str] = {}
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-
-    total_size = get_remote_size(url, headers)
-
-    for attempt in range(1, max_retries + 1):
-        downloaded = part.stat().st_size if part.exists() else 0
-        req_headers = dict(headers)
-
-        if downloaded > 0:
-            req_headers["Range"] = f"bytes={downloaded}-"
-
-        log({
-            "stage": "download_attempt",
-            "attempt": attempt,
-            "resume_from_bytes": downloaded,
-            "target_path": str(dest),
-            "total_size_bytes": total_size,
-        })
-
-        try:
-            with requests.get(url, headers=req_headers, stream=True, allow_redirects=True, timeout=(30, 120)) as r:
-                if r.status_code not in (200, 206):
-                    raise RuntimeError(f"Unexpected status code: {r.status_code}")
-
-                mode = "ab" if downloaded > 0 else "wb"
-                with open(part, mode) as f:
-                    last_log_time = time.time()
-                    bytes_written = downloaded
-
-                    for chunk in r.iter_content(chunk_size=chunk_size):
-                        if not chunk:
-                            continue
-                        f.write(chunk)
-                        bytes_written += len(chunk)
-
-                        now = time.time()
-                        if now - last_log_time >= 5:
-                            percent = None
-                            if total_size and total_size > 0:
-                                percent = round(bytes_written * 100.0 / total_size, 2)
-                            log({
-                                "stage": "download_progress",
-                                "downloaded_bytes": bytes_written,
-                                "total_size_bytes": total_size,
-                                "percent": percent,
-                                "part_path": str(part),
-                            })
-                            last_log_time = now
-
-            final_size = part.stat().st_size
-            if total_size is not None and final_size < total_size:
-                raise RuntimeError(
-                    f"Download incomplete: have {final_size} bytes, expected {total_size}"
-                )
-
-            part.replace(dest)
-
-            log({
-                "stage": "download_complete",
-                "model_path": str(dest),
-                "size_bytes": dest.stat().st_size,
-            })
-            return dest
-
-        except Exception as exc:
-            log({
-                "stage": "download_retry",
-                "attempt": attempt,
-                "error": str(exc),
-            })
-            if attempt == max_retries:
-                raise
-            time.sleep(min(5 * attempt, 30))
-
-    raise RuntimeError("Download failed after retries")
 
 def repo_cache_dir(cache_root: Path, repo_id: str) -> Path:
     safe = re.sub(r"[^a-zA-Z0-9_.-]+", "_", repo_id)
     return cache_root / safe
 
 
+def choose_remote_file(
+    repo_id: str,
+    quant: str,
+    explicit_model_file: str | None,
+    hf_token: str | None,
+) -> str:
+    api = HfApi(token=hf_token)
+
+    files = api.list_repo_files(repo_id=repo_id, repo_type="model")
+    ggufs = [f for f in files if f.lower().endswith(".gguf")]
+
+    if explicit_model_file:
+        if explicit_model_file not in ggufs:
+            raise RuntimeError(
+                f"MODEL_FILE={explicit_model_file!r} not found in repo {repo_id}. "
+                f"Available gguf files: {ggufs}"
+            )
+        return explicit_model_file
+
+    if not ggufs:
+        raise RuntimeError(f"No GGUF files found in repo {repo_id}")
+
+    quant = quant.strip()
+    if not quant:
+        if len(ggufs) == 1:
+            return ggufs[0]
+        raise RuntimeError(
+            f"MODEL_REPO did not include quant and MODEL_FILE is not set. "
+            f"Available gguf files in {repo_id}: {ggufs}"
+        )
+
+    def score(filename: str) -> tuple[int, int, str]:
+        name = filename.lower()
+        q = quant.lower()
+        if name.endswith(f"-{q}.gguf"):
+            return (0, len(filename), filename)
+        if f"-{q}." in name:
+            return (1, len(filename), filename)
+        if q in name:
+            return (2, len(filename), filename)
+        return (9, len(filename), filename)
+
+    ranked = sorted(ggufs, key=score)
+    if score(ranked[0])[0] >= 9:
+        raise RuntimeError(
+            f"Could not find GGUF matching quant={quant!r} in repo {repo_id}. "
+            f"Available gguf files: {ggufs}"
+        )
+    return ranked[0]
+
+
 def find_cached_model(repo_dir: Path, remote_file: str) -> Path | None:
     candidate = repo_dir / remote_file
-    if candidate.exists():
+    if candidate.exists() and candidate.is_file():
         return candidate
     return None
 
-def ensure_model(repo_id: str, quant: str, cache_root: Path, hf_token: str | None) -> Path:
+
+def content_length_from_head(url: str, hf_token: str | None) -> int | None:
+    headers = {}
+    if hf_token:
+        headers["Authorization"] = f"Bearer {hf_token}"
+
+    try:
+        r = requests.head(url, headers=headers, allow_redirects=True, timeout=30)
+        r.raise_for_status()
+        size = r.headers.get("Content-Length")
+        return int(size) if size is not None else None
+    except Exception:
+        return None
+
+
+def download_with_resume(url: str, final_path: Path, hf_token: str | None) -> Path:
+    final_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = final_path.with_suffix(final_path.suffix + ".part")
+
+    existing = tmp_path.stat().st_size if tmp_path.exists() else 0
+    total_size = content_length_from_head(url, hf_token)
+
+    headers = {}
+    if hf_token:
+        headers["Authorization"] = f"Bearer {hf_token}"
+    if existing > 0:
+        headers["Range"] = f"bytes={existing}-"
+
+    with requests.get(url, headers=headers, stream=True, timeout=60) as r:
+        if existing > 0 and r.status_code == 200:
+            existing = 0
+            tmp_path.unlink(missing_ok=True)
+
+        r.raise_for_status()
+
+        if total_size is None:
+            content_length = r.headers.get("Content-Length")
+            if content_length is not None:
+                total_size = int(content_length) + existing
+
+        mode = "ab" if existing > 0 else "wb"
+        downloaded = existing
+        last_report_time = 0.0
+        last_reported = -1
+
+        with open(tmp_path, mode) as f:
+            for chunk in r.iter_content(chunk_size=1024 * 1024):
+                if not chunk:
+                    continue
+
+                f.write(chunk)
+                downloaded += len(chunk)
+
+                now = time.time()
+                should_report = (
+                    downloaded != last_reported
+                    and (
+                        now - last_report_time >= 1.0
+                        or (total_size is not None and downloaded >= total_size)
+                    )
+                )
+
+                if should_report:
+                    log(
+                        {
+                            "stage": "model_download_progress",
+                            "path": str(final_path),
+                            "downloaded_bytes": downloaded,
+                            "total_bytes": total_size,
+                            "percent": round(downloaded * 100.0 / total_size, 2)
+                            if total_size
+                            else None,
+                        }
+                    )
+                    last_report_time = now
+                    last_reported = downloaded
+
+    tmp_path.replace(final_path)
+
+    log(
+        {
+            "stage": "model_download_complete",
+            "path": str(final_path),
+            "size_bytes": final_path.stat().st_size,
+        }
+    )
+    return final_path
+
+
+def ensure_model(
+    repo_id: str,
+    quant: str,
+    cache_root: Path,
+    hf_token: str | None,
+    explicit_model_file: str | None,
+) -> Path:
     cache_root.mkdir(parents=True, exist_ok=True)
 
-    remote_file = find_remote_model_file(repo_id, quant)
+    remote_file = choose_remote_file(repo_id, quant, explicit_model_file, hf_token)
     repo_dir = repo_cache_dir(cache_root, repo_id)
     repo_dir.mkdir(parents=True, exist_ok=True)
 
+    log(
+        {
+            "stage": "resolve_model",
+            "repo_id": repo_id,
+            "quant": quant,
+            "remote_file": remote_file,
+            "cache_root": str(cache_root),
+            "repo_dir": str(repo_dir),
+        }
+    )
+
     cached = find_cached_model(repo_dir, remote_file)
     if cached is not None:
-        log({
-            "stage": "model_cached",
-            "repo_id": repo_id,
-            "model_path": str(cached),
-            "size_bytes": cached.stat().st_size,
-        })
+        log(
+            {
+                "stage": "model_cached",
+                "repo_id": repo_id,
+                "model_path": str(cached),
+                "size_bytes": cached.stat().st_size,
+            }
+        )
         return cached
 
-    url = hf_resolve_url(repo_id, remote_file)
+    url = hf_hub_url(repo_id=repo_id, filename=remote_file, repo_type="model")
     final_path = repo_dir / remote_file
 
-    log({
-        "stage": "model_download_start",
-        "repo_id": repo_id,
-        "remote_file": remote_file,
-        "url": url,
-        "target_path": str(final_path),
-    })
+    log(
+        {
+            "stage": "model_download_start",
+            "repo_id": repo_id,
+            "remote_file": remote_file,
+            "target_path": str(final_path),
+        }
+    )
 
     return download_with_resume(url, final_path, hf_token)
 
-def main() -> None:
-    model_repo_raw = os.getenv("MODEL_REPO", "").strip()
-    model_alias = os.getenv("MODEL_ALIAS", "local").strip() or "local"
-    hf_token = os.getenv("HF_TOKEN") or None
 
-    ctx_size = os.getenv("CTX_SIZE", "4096")
-    n_predict = os.getenv("N_PREDICT", "512")
-    n_gpu_layers = os.getenv("N_GPU_LAYERS", "auto")
-    batch_size = os.getenv("BATCH_SIZE", "64")
-    ubatch_size = os.getenv("UBATCH_SIZE", "32")
-    threads = os.getenv("THREADS", "4")
-    parallel = os.getenv("PARALLEL", "1")
+def build_server_cmd(model_path: Path) -> list[str]:
+    server_bin = (
+        getenv("LLAMA_SERVER_BIN")
+        or shutil.which("llama-server")
+        or "/app/llama-server"
+    )
 
-    cache_root = Path("/models/cache")
-    repo_id, quant = parse_repo_and_quant(model_repo_raw)
-
-    log({
-        "stage": "resolve_model",
-        "repo_id": repo_id,
-        "quant": quant,
-        "cache_root": str(cache_root),
-    })
-
-    model_path = ensure_model(repo_id, quant, cache_root, hf_token)
+    host = getenv("LLAMA_ARG_HOST") or "0.0.0.0"
+    port = getenv("LLAMA_ARG_PORT") or "8080"
+    alias = getenv("MODEL_ALIAS") or "local"
+    ctx_size = getenv("CTX_SIZE") or "4096"
+    n_predict = getenv("N_PREDICT") or "1024"
+    n_gpu_layers = getenv("N_GPU_LAYERS") or "999"
+    batch_size = getenv("BATCH_SIZE") or "256"
+    ubatch_size = getenv("UBATCH_SIZE") or "128"
+    threads = getenv("THREADS") or "4"
+    parallel = getenv("PARALLEL") or "1"
 
     cmd = [
-        "/app/llama-server",
-        "--host", "0.0.0.0",
-        "--port", "8080",
-        "--model", str(model_path),
-        "--alias", model_alias,
-        "--ctx-size", str(ctx_size),
-        "--n-predict", str(n_predict),
-        "--n-gpu-layers", str(n_gpu_layers),
-        "--batch-size", str(batch_size),
-        "--ubatch-size", str(ubatch_size),
-        "--threads", str(threads),
-        "--parallel", str(parallel),
-        "-v",
+        server_bin,
+        "--host",
+        host,
+        "--port",
+        port,
+        "-m",
+        str(model_path),
+        "--alias",
+        alias,
+        "--ctx-size",
+        ctx_size,
+        "--n-predict",
+        n_predict,
+        "--n-gpu-layers",
+        n_gpu_layers,
+        "--batch-size",
+        batch_size,
+        "--ubatch-size",
+        ubatch_size,
+        "--threads",
+        threads,
+        "--parallel",
+        parallel,
     ]
 
-    log({
-        "stage": "launch_server",
-        "cmd": cmd,
-    })
+    if getenv("NO_WARMUP", "0") == "1":
+        cmd.append("--no-warmup")
 
-    os.execv(cmd[0], cmd)
+    return cmd
+
+
+def main() -> None:
+    model_repo = getenv("MODEL_REPO")
+    model_file = getenv("MODEL_FILE") or None
+    hf_token = (
+        getenv("HF_TOKEN")
+        or getenv("HUGGINGFACE_TOKEN")
+        or getenv("HUGGINGFACE_HUB_TOKEN")
+        or None
+    )
+
+    if not model_repo:
+        raise SystemExit("MODEL_REPO is not set")
+
+    repo_id, quant = parse_model_repo(model_repo)
+    cache_root = Path(getenv("MODEL_CACHE_ROOT") or "/models/cache")
+
+    model_path = ensure_model(
+        repo_id=repo_id,
+        quant=quant,
+        cache_root=cache_root,
+        hf_token=hf_token,
+        explicit_model_file=model_file,
+    )
+
+    cmd = build_server_cmd(model_path)
+
+    log(
+        {
+            "stage": "launch_server",
+            "repo_id": repo_id,
+            "model_path": str(model_path),
+            "cmd": cmd,
+        }
+    )
+
+    os.execvpe(cmd[0], cmd, os.environ.copy())
 
 
 if __name__ == "__main__":
-    try:
-        main()
-    except Exception as exc:
-        print(json.dumps({"stage": "fatal", "error": str(exc)}, ensure_ascii=False), file=sys.stderr, flush=True)
-        raise
+    main()
