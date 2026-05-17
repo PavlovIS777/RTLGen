@@ -20,6 +20,7 @@
     "directed_scenarios": 6,
     "random_scenarios": 2,
     "max_segments_per_scenario": 5,
+    "min_total_cycles_per_scenario": 10,
     "max_total_cycles_per_scenario": 18,
     "max_repeat_per_segment": 6,
     "min_line_coverage_percent": 95.0,
