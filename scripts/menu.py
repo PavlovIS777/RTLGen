@@ -72,7 +72,7 @@ def print_stage_report(report: dict) -> None:
     for key in ("strategy_file", "plan_file", "scenarios_file", "path", "results_file", "golden_trace_file", "coverage_file", "tb_dir", "waves_dir", "plots_dir"):
         if key in report:
             ui.artifact(key, str(report[key]))
-    for key in ("scenario_count", "passed_count", "failed_count", "iterations", "count"):
+    for key in ("scenario_count", "passed_count", "failed_count", "iterations", "count", "waveform_count"):
         if key in report:
             style = "summary_total"
             if key == "passed_count":
@@ -100,7 +100,8 @@ def print_menu(spec_path: str | None) -> None:
     ui.bullet("3  Generate and validate Python module")
     ui.bullet("4  Generate testbenches")
     ui.bullet("5  Generate and validate RTL")
-    ui.bullet("6  Run full pipeline")
+    ui.bullet("6  Generate post artifacts")
+    ui.bullet("7  Run full pipeline")
     ui.bullet("0  Exit")
     ui.separator()
 
@@ -120,7 +121,7 @@ def main() -> None:
                 selected = choose_spec_interactive()
                 if selected:
                     spec_path = selected
-            elif choice in {"2", "3", "4", "5", "6"}:
+            elif choice in {"2", "3", "4", "5", "6", "7"}:
                 if spec_path is None:
                     ui.warning("No spec selected.")
                     spec_path = choose_spec_interactive()
@@ -148,6 +149,9 @@ def main() -> None:
                         for i, item in enumerate(results, start=1):
                             ui.scenario_result(i, total, item["scenario_name"], item["passed"])
                 elif choice == "6":
+                    report = orch.postprocess_artifacts(spec)
+                    print_stage_report(report)
+                elif choice == "7":
                     report = orch.run(spec)
                     ui.success("Full pipeline finished")
                     ui.artifact("Generated dir", report["generated_dir"])

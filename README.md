@@ -4,7 +4,7 @@ RTLGEN — tests-first пайплайн генерации и верификац
 
 Он строит артефакты по шагам:
 
-**spec → strategy → scenario plan → compact scenarios (segments) → Python reference model → Python validation → coverage refinement (if needed) → golden trace → deterministic testbenches → RTL → RTL validation / repair**
+**spec → strategy → scenario plan → compact scenarios (segments) → Python reference model → Python validation → coverage refinement (if needed) → golden trace → deterministic testbenches → RTL → RTL validation / repair → post artifacts**
 
 Ключевая идея:
 - сначала строится эталонная Python-модель и валидируется на сгенерированных сценариях;
@@ -12,6 +12,7 @@ RTLGEN — tests-first пайплайн генерации и верификац
 - testbench'и детерминированно генерируются из golden trace;
 - только после этого генерируется RTL;
 - если RTL не проходит тесты, регенерируется **только RTL**, а тесты и testbench'и считаются фиксированными.
+- plots / waveform summaries генерируются отдельным post-generation stage.
 
 Пайплайн вдохновлён статьёй **AutoVeriFix: Automatically Correcting Errors and Enhancing Functional Correctness in LLM-Generated Verilog Code** (Yan Tan, Xiangchen Meng, Zijun Jiang, Yangdi Lyu, arXiv:2509.08416).
 

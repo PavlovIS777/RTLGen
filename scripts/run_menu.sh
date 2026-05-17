@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CONFIG_DIR="$ROOT/configs"
+HOST_VENV="$ROOT/.venv"
 
 if [[ $# -ge 1 ]]; then
   if [[ ! -f "$CONFIG_DIR/$1.env" ]]; then
@@ -41,6 +42,12 @@ set +a
 BACKEND="${RTLGEN_BACKEND:-local}"
 
 if [[ "$BACKEND" == "api" ]]; then
+  if [[ ! -x "$HOST_VENV/bin/python" ]]; then
+    echo "Host API environment is not installed."
+    echo "Run first:"
+    echo "  ./scripts/install_host.sh $PROFILE"
+    exit 1
+  fi
   if [[ -z "${MODEL_API_KEY:-}" ]]; then
     echo "MODEL_API_KEY is required for API profile: $PROFILE"
     echo "Set it in your shell before running:"
@@ -48,7 +55,7 @@ if [[ "$BACKEND" == "api" ]]; then
     exit 1
   fi
   export PYTHONPATH="$ROOT"
-  exec python3 "$ROOT/scripts/menu.py"
+  exec "$HOST_VENV/bin/python" "$ROOT/scripts/menu.py"
 fi
 
 if [[ "$BACKEND" != "local" ]]; then

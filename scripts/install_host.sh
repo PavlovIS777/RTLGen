@@ -3,6 +3,8 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CONFIG_DIR="$ROOT/configs"
+HOST_VENV="$ROOT/.venv"
+HOST_REQUIREMENTS="$ROOT/configs/requirements.docker.txt"
 
 print_profiles() {
   echo "Available profiles:"
@@ -41,7 +43,32 @@ printf "UID=%s\nGID=%s\n" "$(id -u)" "$(id -g)" > "$ROOT/.env"
 echo "$PROFILE" > "$ROOT/.rtlgen_profile"
 mkdir -p "$ROOT/generated"
 
+install_host_requirements() {
+  if [[ "${RTLGEN_SKIP_HOST_DEPS:-0}" == "1" ]]; then
+    echo "Skipping host dependency install because RTLGEN_SKIP_HOST_DEPS=1."
+    return
+  fi
+
+  if [[ ! -f "$HOST_REQUIREMENTS" ]]; then
+    echo "Host requirements file not found: $HOST_REQUIREMENTS"
+    exit 1
+  fi
+
+  if [[ ! -x "$HOST_VENV/bin/python" ]]; then
+    echo "Creating host Python venv: $HOST_VENV"
+    if ! python3 -m venv "$HOST_VENV"; then
+      echo "Failed to create Python venv. Install python3-venv and retry."
+      exit 1
+    fi
+  fi
+
+  echo "Installing host API dependencies from configs/requirements.docker.txt..."
+  "$HOST_VENV/bin/python" -m pip install --upgrade pip
+  "$HOST_VENV/bin/python" -m pip install -r "$HOST_REQUIREMENTS"
+}
+
 if [[ "$BACKEND" == "api" ]]; then
+  install_host_requirements
   echo "Selected API profile: $PROFILE"
   echo "Provider: ${MODEL_PROVIDER:-openai_compatible}"
   echo "Base URL: ${MODEL_BASE_URL:-<not set>}"
