@@ -251,6 +251,9 @@ def build_server_cmd(model_path: Path) -> list[str]:
     ubatch_size = getenv("UBATCH_SIZE") or "128"
     threads = getenv("THREADS") or "4"
     parallel = getenv("PARALLEL") or "1"
+    temperature = getenv("TEMPERATURE")
+    top_p = getenv("TOP_P")
+    repeat_penalty = getenv("REPEAT_PENALTY")
 
     cmd = [
         server_bin,
@@ -277,6 +280,13 @@ def build_server_cmd(model_path: Path) -> list[str]:
         "--parallel",
         parallel,
     ]
+
+    if temperature:
+        cmd.extend(["--temp", temperature])
+    if top_p:
+        cmd.extend(["--top-p", top_p])
+    if repeat_penalty:
+        cmd.extend(["--repeat-penalty", repeat_penalty])
 
     if getenv("NO_WARMUP", "0") == "1":
         cmd.append("--no-warmup")

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import subprocess
 import sys
 from pathlib import Path
 
@@ -11,7 +10,10 @@ SPECS_ROOT = PROJECT_ROOT / "specs"
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.paths import get_module_paths
+from src.llm.client import create_model_client
+from src.pipeline.logger import PipelineLogger
+from src.pipeline.orchestrator import PipelineOrchestrator
+from src.spec.parser import load_spec
 from src.ui.renderer import ConsoleUI
 
 
@@ -28,30 +30,19 @@ def load_spec_payload(spec_path: str | Path) -> dict:
     path = Path(spec_path)
     if not path.is_absolute():
         path = PROJECT_ROOT / path
-    with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)
-
-
-def get_module_name_from_spec(spec_path: str | Path) -> str:
-    return load_spec_payload(spec_path)["module_name"]
-
-
-def get_module_description_from_spec(spec_path: str | Path) -> str:
-    return load_spec_payload(spec_path).get("description", "")
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def choose_spec_interactive() -> str | None:
     specs = list_spec_files()
     ui.title("RTLGEN · SELECT SPEC")
-
     if not specs:
         ui.error("No spec files found in specs/")
         return None
 
     for idx, path in enumerate(specs, start=1):
-        rel = path.relative_to(PROJECT_ROOT)
         payload = load_spec_payload(path)
-        ui.bullet(f"[{idx}] {rel}", detail=f"module: {payload.get('module_name', '<unknown>')}")
+        ui.bullet(f"[{idx}] {path.relative_to(PROJECT_ROOT)}", detail=f"module: {payload.get('module_name', '<unknown>')}")
         if payload.get("description"):
             ui.paragraph(payload["description"], indent=6)
         ui.separator()
@@ -63,216 +54,62 @@ def choose_spec_interactive() -> str | None:
         ui.error("Invalid selection.")
         return None
 
-    index = int(choice)
-    if index < 1 or index > len(specs):
+    idx = int(choice)
+    if idx < 1 or idx > len(specs):
         ui.error("Selection out of range.")
         return None
 
-    selected = specs[index - 1].relative_to(PROJECT_ROOT)
+    selected = str(specs[idx - 1].relative_to(PROJECT_ROOT))
     ui.success(f"Selected spec: {selected}")
-    return str(selected)
+    return selected
 
 
-def ensure_spec_selected(current_spec: str | None) -> str | None:
-    if current_spec is not None:
-        return current_spec
-    ui.warning("No spec selected.")
-    return choose_spec_interactive()
-
-
-def run_json_command(cmd: list[str]) -> dict:
-    result = subprocess.run(cmd, cwd=PROJECT_ROOT, text=True, capture_output=True)
-    if result.returncode != 0:
-        raise RuntimeError(result.stderr.strip() or result.stdout.strip() or "Command failed")
-    return json.loads(result.stdout.strip()) if result.stdout.strip() else {}
-
-
-def print_artifact_result(payload: dict) -> None:
-    artifact = payload.get("artifact")
-
-    if artifact == "python_model":
-        ui.success("Python reference model generated")
-        ui.artifact("File", payload["path"])
-
-    elif artifact == "tests":
-        ui.success("Input scenarios and golden trace generated")
-        ui.summary_row("Scenarios", payload.get("scenario_count", "?"), "bright_cyan")
-        ui.artifact("Input scenarios", payload["input_scenarios"])
-        ui.artifact("Golden trace", payload["golden_trace"])
-        ui.artifact("Pytest file", payload["pytest"])
-
-    elif artifact == "rtl":
-        ui.success("RTL module generated")
-        ui.artifact("RTL file", payload["path"])
-
-    elif artifact == "testbenches":
-        ui.success("SystemVerilog testbenches generated")
-        ui.summary_row("Count", payload["count"], "bright_cyan")
-        ui.artifact("Testbench dir", payload["tb_dir"])
-        ui.artifact("Waveforms dir", payload["waves_dir"])
-
-    elif artifact == "simulation_suite":
-        if payload.get("failed_count", 0) == 0:
-            ui.success("RTL module passed all generated testbenches")
-        else:
-            ui.error("RTL simulation suite detected failures")
-
-        ui.summary_row("Scenarios", payload["scenario_count"], "bright_cyan")
-        ui.summary_row("Passed", payload["passed_count"], "bright_green")
-        ui.summary_row("Failed", payload["failed_count"], "bright_red" if payload["failed_count"] else "bright_green")
-
-        ui.separator()
-        ui.info("Scenario results")
-        for idx, item in enumerate(payload.get("scenario_results", []), start=1):
-            ui.scenario_result(
-                idx,
-                payload["scenario_count"],
-                item["scenario_name"],
-                item["passed"],
-            )
-            if item.get("repaired_testbench"):
-                ui.warning(f"Testbench repaired {item.get('repair_count', 0)} time(s): {item['scenario_name']}")
-
-        ui.separator()
-        ui.artifact("Build dir", payload["build_dir"])
-        ui.artifact("Waveforms dir", payload["waves_dir"])
-
-    ui.separator()
-
-
-def generate_python_model(spec_path: str) -> int:
-    payload = run_json_command([sys.executable, "scripts/generate_python_model.py", "--spec", spec_path, "--json"])
-    print_artifact_result(payload)
-    return 0
-
-
-def generate_tests(spec_path: str) -> int:
-    paths = get_module_paths("generated", get_module_name_from_spec(spec_path))
-    payload = run_json_command([
-        sys.executable,
-        "scripts/generate_tests.py",
-        "--spec",
-        spec_path,
-        "--model",
-        str(paths.python_model_file),
-        "--json",
-    ])
-    print_artifact_result(payload)
-    return 0
-
-
-def run_reference_validation(spec_path: str) -> int:
-    module_name = get_module_name_from_spec(spec_path)
-    result = subprocess.run(
-        [sys.executable, "scripts/run_reference_tests.py", "--module-dir", f"generated/{module_name}"],
-        cwd=PROJECT_ROOT,
-    )
-    return result.returncode
-
-
-def generate_rtl(spec_path: str) -> int:
-    paths = get_module_paths("generated", get_module_name_from_spec(spec_path))
-    payload = run_json_command([
-        sys.executable,
-        "scripts/generate_rtl.py",
-        "--spec",
-        spec_path,
-        "--model",
-        str(paths.python_model_file),
-        "--trace",
-        str(paths.golden_trace_file),
-        "--json",
-    ])
-    print_artifact_result(payload)
-    return 0
-
-
-def generate_testbenches(spec_path: str) -> int:
-    paths = get_module_paths("generated", get_module_name_from_spec(spec_path))
-    payload = run_json_command([
-        sys.executable,
-        "scripts/generate_testbench.py",
-        "--spec",
-        spec_path,
-        "--trace",
-        str(paths.golden_trace_file),
-        "--json",
-    ])
-    print_artifact_result(payload)
-    return 0
-
-
-def run_iverilog_suite(spec_path: str) -> int:
-    payload = run_json_command([
-        sys.executable,
-        "scripts/run_iverilog.py",
-        "--spec",
-        spec_path,
-        "--json",
-    ])
-    print_artifact_result(payload)
-    return 0 if payload.get("failed_count", 1) == 0 else 1
-
-
-def full_flow(spec_path: str) -> int:
-    steps = [
-        ("Generate Python reference model", lambda: generate_python_model(spec_path)),
-        ("Generate input scenarios and golden trace", lambda: generate_tests(spec_path)),
-        ("Validate reference model", lambda: run_reference_validation(spec_path)),
-        ("Generate SystemVerilog testbenches", lambda: generate_testbenches(spec_path)),
-        ("Generate RTL module", lambda: generate_rtl(spec_path)),
-        ("Compile and run RTL simulation suite", lambda: run_iverilog_suite(spec_path)),
-    ]
-
-    ui.title("RTLGEN · FULL FLOW")
-
-    for idx, (name, fn) in enumerate(steps, start=1):
-        ui.step(idx, len(steps), name)
-        try:
-            code = fn()
-        except Exception as exc:
-            ui.error("Flow failed")
-            ui.paragraph(str(exc), indent=2)
-            ui.error(f"Stopped on step {idx}: {name}")
-            return 1
-
-        if code != 0:
-            ui.error(f"Stopped on step {idx}: {name}")
-            return code
-
-    ui.success("RTL MODULE IS READY AND PASSED TESTBENCH VALIDATION")
-    return 0
+def print_stage_report(report: dict) -> None:
+    ui.success("Stage finished")
+    for key in ("artifact", "module_name"):
+        if key in report:
+            ui.kv(key, str(report[key]))
+    for key in ("strategy_file", "plan_file", "scenarios_file", "path", "results_file", "golden_trace_file", "coverage_file", "tb_dir", "waves_dir", "plots_dir"):
+        if key in report:
+            ui.artifact(key, str(report[key]))
+    for key in ("scenario_count", "passed_count", "failed_count", "iterations", "count"):
+        if key in report:
+            style = "summary_total"
+            if key == "passed_count":
+                style = "summary_passed"
+            elif key == "failed_count":
+                style = "summary_failed_bad" if int(report[key]) else "summary_failed_ok"
+            ui.summary_row(key, report[key], style)
 
 
 def print_menu(spec_path: str | None) -> None:
     ui.title("RTLGEN")
-
     if spec_path is None:
         ui.kv("Selected spec", "<none>")
     else:
-        module_name = get_module_name_from_spec(spec_path)
-        module_description = get_module_description_from_spec(spec_path)
-        ui.kv("Selected spec", spec_path, "bold bright_magenta")
-        ui.kv("Module", module_name, "bold bright_cyan")
-        if module_description:
+        payload = load_spec_payload(spec_path)
+        ui.kv("Selected spec", spec_path, "artifact")
+        ui.kv("Module", payload["module_name"], "label")
+        if payload.get("description"):
             ui.kv("Description", "")
-            ui.paragraph(module_description, indent=2)
+            ui.paragraph(payload["description"], indent=2)
 
     ui.separator()
     ui.bullet("1  Select spec from specs/")
-    ui.bullet("2  Generate Python reference model")
-    ui.bullet("3  Generate input scenarios and golden trace")
-    ui.bullet("4  Validate reference model")
-    ui.bullet("5  Generate RTL module")
-    ui.bullet("6  Generate SystemVerilog testbenches")
-    ui.bullet("7  Compile and run RTL simulation suite")
-    ui.bullet("8  Run full flow")
+    ui.bullet("2  Generate tests")
+    ui.bullet("3  Generate and validate Python module")
+    ui.bullet("4  Generate testbenches")
+    ui.bullet("5  Generate and validate RTL")
+    ui.bullet("6  Run full pipeline")
     ui.bullet("0  Exit")
     ui.separator()
 
 
 def main() -> None:
     spec_path: str | None = None
+    client = create_model_client()
+    client.wait_until_ready()
+    orch = PipelineOrchestrator(client, logger=PipelineLogger())
 
     while True:
         print_menu(spec_path)
@@ -281,49 +118,51 @@ def main() -> None:
         try:
             if choice == "1":
                 selected = choose_spec_interactive()
-                if selected is not None:
+                if selected:
                     spec_path = selected
-            elif choice == "2":
-                spec_path = ensure_spec_selected(spec_path)
-                if spec_path:
-                    ui.section("Generate Python reference model")
-                    generate_python_model(spec_path)
-            elif choice == "3":
-                spec_path = ensure_spec_selected(spec_path)
-                if spec_path:
-                    ui.section("Generate input scenarios and golden trace")
-                    generate_tests(spec_path)
-            elif choice == "4":
-                spec_path = ensure_spec_selected(spec_path)
-                if spec_path:
-                    ui.section("Validate reference model")
-                    run_reference_validation(spec_path)
-            elif choice == "5":
-                spec_path = ensure_spec_selected(spec_path)
-                if spec_path:
-                    ui.section("Generate RTL module")
-                    generate_rtl(spec_path)
-            elif choice == "6":
-                spec_path = ensure_spec_selected(spec_path)
-                if spec_path:
-                    ui.section("Generate SystemVerilog testbenches")
-                    generate_testbenches(spec_path)
-            elif choice == "7":
-                spec_path = ensure_spec_selected(spec_path)
-                if spec_path:
-                    ui.section("Compile and run RTL simulation suite")
-                    run_iverilog_suite(spec_path)
-            elif choice == "8":
-                spec_path = ensure_spec_selected(spec_path)
-                if spec_path:
-                    full_flow(spec_path)
+            elif choice in {"2", "3", "4", "5", "6"}:
+                if spec_path is None:
+                    ui.warning("No spec selected.")
+                    spec_path = choose_spec_interactive()
+                    if not spec_path:
+                        continue
+                spec = load_spec(spec_path)
+
+                if choice == "2":
+                    report = orch.generate_tests(spec)
+                    print_stage_report(report)
+                elif choice == "3":
+                    report = orch.validate_python(spec)
+                    print_stage_report(report)
+                elif choice == "4":
+                    report = orch.generate_testbenches(spec)
+                    print_stage_report(report)
+                elif choice == "5":
+                    report = orch.validate_rtl(spec)
+                    print_stage_report(report)
+                    if "results" in report:
+                        ui.separator()
+                        ui.info("Scenario results")
+                        results = report["results"]["scenario_results"]
+                        total = max(1, len(results))
+                        for i, item in enumerate(results, start=1):
+                            ui.scenario_result(i, total, item["scenario_name"], item["passed"])
+                elif choice == "6":
+                    report = orch.run(spec)
+                    ui.success("Full pipeline finished")
+                    ui.artifact("Generated dir", report["generated_dir"])
+                    ui.artifact("Plots dir", report["plots_dir"])
+                    rtl = report["rtl"]
+                    ui.summary_row("Scenarios", rtl["scenario_count"], "summary_total")
+                    ui.summary_row("Passed", rtl["passed_count"], "summary_passed")
+                    ui.summary_row("Failed", rtl["failed_count"], "summary_failed_bad" if rtl["failed_count"] else "summary_failed_ok")
             elif choice == "0":
                 ui.note("Bye.")
                 break
             else:
                 ui.error("Unknown option.")
         except Exception as exc:
-            ui.error("ERROR")
+            ui.error("Flow failed")
             ui.paragraph(str(exc), indent=2)
 
 
